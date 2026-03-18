@@ -153,14 +153,27 @@ def scrape_cliente(page, usuario, password):
     page.click("#submitButton")
     page.wait_for_load_state("networkidle")
 
+    # Ir al historial
     page.goto("https://aif2.cnv.gov.ar/Administered/History")
     page.wait_for_load_state("networkidle")
-    page.select_option("#date", "all")
 
-    # Espera más larga para que la tabla cargue con todos los registros
-    page.wait_for_timeout(5000)
+    # Esperar tabla inicial con filtro por defecto
     page.wait_for_selector("#grid-presentations tbody tr", timeout=20000)
 
+    # Cambiar filtro a "Todos"
+    page.select_option("#date", "all")
+
+    # Esperar activamente que la tabla recargue con más de 1 fila
+    page.wait_for_timeout(3000)
+    for _ in range(30):
+        filas = page.query_selector_all("#grid-presentations tbody tr")
+        if len(filas) > 1:
+            break
+        page.wait_for_timeout(1000)
+
+    print(f"  Filas tras cambio de filtro: {len(page.query_selector_all('#grid-presentations tbody tr'))}")
+
+    # Recorrer todas las páginas
     while True:
         filas = page.query_selector_all("#grid-presentations tbody tr")
         print(f"  Filas en página actual: {len(filas)}")
@@ -227,7 +240,6 @@ def main():
 
             print(f"[START] {nombre} ({tipo})")
 
-            # Contexto nuevo por cliente para evitar sesiones cruzadas
             ctx  = browser.new_context(locale="es-AR")
             page = ctx.new_page()
 
