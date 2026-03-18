@@ -158,8 +158,8 @@ def scrape_cliente(page, usuario, password):
     # Completar formulario ADFS
     page.wait_for_selector("input[name='UserName']", timeout=15000)
     page.fill("input[name='UserName']", usuario)
-    page.fill("input[name='Password']", password)
-    page.click("input[type='submit']")
+    page.fill("input[name='Password']", password)   
+    page.click("#submitButton")
     page.wait_for_load_state("networkidle")
 
     # Ir al historial y mostrar todos los registros
