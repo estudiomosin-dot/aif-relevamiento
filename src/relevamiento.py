@@ -1,4 +1,4 @@
-import os, json
+import os, json, time
 from datetime import datetime, date, timedelta
 import gspread
 from google.oauth2.service_account import Credentials
@@ -109,6 +109,7 @@ def actualizar_formulario(sheet, tipo, codigo, fecha_pres, estado):
             row_num = i + 1
             ws.update_cell(row_num, 7, fecha_pres.strftime("%d/%m/%Y") if fecha_pres else "")
             ws.update_cell(row_num, 8, estado)
+            time.sleep(1)
             return True
     return False
 
