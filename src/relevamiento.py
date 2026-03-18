@@ -84,9 +84,20 @@ def conectar_sheet():
 
 
 def leer_clientes(sheet):
-    ws   = sheet.worksheet("CONFIGURACIÓN")
-    rows = ws.get_all_records()
-    return [r for r in rows if str(r.get("ACTIVO (S/N)", "")).upper() == "S"]
+    ws       = sheet.worksheet("CONFIGURACIÓN")
+    all_rows = ws.get_all_values()
+    if len(all_rows) < 7:
+        return []
+    encabezados = all_rows[5]
+    filas_datos = all_rows[6:]
+    clientes = []
+    for fila in filas_datos:
+        if not any(fila):
+            continue
+        registro = dict(zip(encabezados, fila))
+        if str(registro.get("ACTIVO (S/N)", "")).upper() == "S":
+            clientes.append(registro)
+    return clientes
 
 
 def actualizar_formulario(sheet, tipo, codigo, fecha_pres, estado):
