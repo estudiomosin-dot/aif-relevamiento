@@ -157,21 +157,26 @@ def scrape_cliente(page, usuario, password):
     page.goto("https://aif2.cnv.gov.ar/Administered/History")
     page.wait_for_load_state("networkidle")
 
-    # Esperar tabla inicial con filtro por defecto
+    # Esperar tabla inicial con filtro por defecto (6 meses)
     page.wait_for_selector("#grid-presentations tbody tr", timeout=20000)
+    filas_iniciales = len(page.query_selector_all("#grid-presentations tbody tr"))
+    print(f"  Filas iniciales (6 meses): {filas_iniciales}")
 
     # Cambiar filtro a "Todos"
     page.select_option("#date", "all")
 
-    # Esperar activamente que la tabla recargue con más de 1 fila
-    page.wait_for_timeout(3000)
-    for _ in range(30):
-        filas = page.query_selector_all("#grid-presentations tbody tr")
-        if len(filas) > 1:
-            break
+    # Esperar que la tabla se recargue — el número de filas debe cambiar
+    for intento in range(60):
         page.wait_for_timeout(1000)
-
-    print(f"  Filas tras cambio de filtro: {len(page.query_selector_all('#grid-presentations tbody tr'))}")
+        filas_ahora = page.query_selector_all("#grid-presentations tbody tr")
+        n = len(filas_ahora)
+        if n > 1 and n != filas_iniciales:
+            print(f"  Tabla recargada en intento {intento+1}: {n} filas")
+            break
+        if intento % 5 == 0:
+            print(f"  Esperando recarga... intento {intento+1}, filas: {n}")
+    else:
+        print("  ADVERTENCIA: tabla puede no haberse recargado, continuando igual")
 
     # Recorrer todas las páginas
     while True:
