@@ -187,7 +187,15 @@ def scrape_cliente(page, usuario, password):
     except Exception:
         pass
 
+    print("=== PRESENTACIONES EXTRAÍDAS ===")
+    nombres_unicos = sorted(set(p["nombre"] for p in presentaciones))
+    for n in nombres_unicos:
+        print(f"  {n}")
+    print(f"=== TOTAL: {len(presentaciones)} ===")
+
     return presentaciones
+
+  
 
 
 def main():
