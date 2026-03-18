@@ -145,8 +145,14 @@ def actualizar_dashboard(sheet, cliente, total, cumplidas, proximas, vencidas):
 def scrape_cliente(page, usuario, password):
     presentaciones = []
 
-    # Ir directo al login — la AIF redirige automáticamente al ADFS
-    page.goto("https://aif2.cnv.gov.ar/Home/Login")
+    # Ir directo al ADFS con la URL exacta del sistema de CNV
+    adfs_url = (
+        "https://cnvfs.cnv.gov.ar/adfs/ls/"
+        "?wtrealm=https://aif2.cnv.gov.ar"
+        "&wa=wsignin1.0"
+        "&wreply=https://aif2.cnv.gov.ar/"
+    )
+    page.goto(adfs_url)
     page.wait_for_load_state("networkidle")
 
     # Completar formulario ADFS
