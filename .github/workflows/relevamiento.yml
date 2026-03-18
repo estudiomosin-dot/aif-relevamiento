@@ -16,9 +16,11 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Instalar dependencias
+     - name: Instalar dependencias
         run: |
-          pip install -r requirements.txt          
+          pip install -r requirements.txt
+          sudo apt-get update
+          sudo apt-get install -y libasound2t64
           playwright install --with-deps chromium
 
       - name: Ejecutar relevamiento
