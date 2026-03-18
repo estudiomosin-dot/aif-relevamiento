@@ -100,20 +100,6 @@ def leer_clientes(sheet):
     return clientes
 
 
-def actualizar_formulario(sheet, tipo, codigo, fecha_pres, estado):
-    nombre_hoja = "ALyC - OBLIGACIONES" if tipo == "ALyC" else "AN - OBLIGACIONES"
-    ws    = sheet.worksheet(nombre_hoja)
-    datos = ws.get_all_values()
-    for i, fila in enumerate(datos):
-        if fila and fila[1].strip() == codigo:
-            row_num = i + 1
-            ws.update_cell(row_num, 7, fecha_pres.strftime("%d/%m/%Y") if fecha_pres else "")
-            ws.update_cell(row_num, 8, estado)
-            time.sleep(1)
-            return True
-    return False
-
-
 def escribir_log(sheet, cliente, codigo, estado_ant, estado_nuevo, fecha_pres):
     ws = sheet.worksheet("LOG")
     ws.append_row([
@@ -125,6 +111,7 @@ def escribir_log(sheet, cliente, codigo, estado_ant, estado_nuevo, fecha_pres):
         fecha_pres.strftime("%d/%m/%Y") if fecha_pres else "",
         "",
     ])
+    time.sleep(1)
 
 
 def actualizar_dashboard(sheet, cliente, total, cumplidas, proximas, vencidas):
@@ -140,13 +127,13 @@ def actualizar_dashboard(sheet, cliente, total, cumplidas, proximas, vencidas):
                 f"=E{row_num}/D{row_num}",
                 datetime.now().strftime("%d/%m/%Y %H:%M"),
             ]])
+            time.sleep(1)
             return
 
 
 def scrape_cliente(page, usuario, password):
     presentaciones = []
 
-    # Ir directo al ADFS con la URL exacta del sistema de CNV
     adfs_url = (
         "https://cnvfs.cnv.gov.ar/adfs/ls/"
         "?wtrealm=https://aif2.cnv.gov.ar"
@@ -156,20 +143,17 @@ def scrape_cliente(page, usuario, password):
     page.goto(adfs_url)
     page.wait_for_load_state("networkidle")
 
-    # Completar formulario ADFS
     page.wait_for_selector("input[name='UserName']", timeout=15000)
     page.fill("input[name='UserName']", usuario)
-    page.fill("input[name='Password']", password)   
+    page.fill("input[name='Password']", password)
     page.click("#submitButton")
     page.wait_for_load_state("networkidle")
 
-    # Ir al historial y mostrar todos los registros
     page.goto("https://aif2.cnv.gov.ar/Administered/History")
     page.wait_for_load_state("networkidle")
     page.select_option("#date", "all")
     page.wait_for_timeout(2000)
 
-    # Recorrer todas las páginas
     while True:
         page.wait_for_selector("#grid-presentations tbody tr")
         filas = page.query_selector_all("#grid-presentations tbody tr")
@@ -211,6 +195,13 @@ def main():
     clientes      = leer_clientes(sheet)
     clientes_json = json.loads(os.environ.get("CLIENTES_JSON", "{}"))
 
+    # Leer ambas hojas de obligaciones UNA SOLA VEZ
+    ws_alyc = sheet.worksheet("ALyC - OBLIGACIONES")
+    ws_an   = sheet.worksheet("AN - OBLIGACIONES")
+    datos_alyc = ws_alyc.get_all_values()
+    datos_an   = ws_an.get_all_values()
+    time.sleep(2)
+
     with sync_playwright() as pw:
         browser = pw.chromium.launch(headless=True)
         page    = browser.new_context(locale="es-AR").new_page()
@@ -234,12 +225,15 @@ def main():
                 print(f"[ERROR] {nombre}: {e}")
                 continue
 
-            nombre_hoja  = "ALyC - OBLIGACIONES" if tipo == "ALyC" else "AN - OBLIGACIONES"
-            ws_oblig     = sheet.worksheet(nombre_hoja)
-            obligaciones = ws_oblig.get_all_values()
+            # Usar datos ya leídos en memoria
+            obligaciones = datos_alyc if tipo == "ALyC" else datos_an
+            ws_oblig     = ws_alyc if tipo == "ALyC" else ws_an
             conteo = {"total": 0, "cumplidas": 0, "proximas": 0, "vencidas": 0}
 
-            for fila in obligaciones[8:]:
+            # Preparar batch de actualizaciones
+            actualizaciones = []
+
+            for i, fila in enumerate(obligaciones[8:]):
                 if not fila or not fila[1]:
                     continue
                 if fila[1].startswith("▶"):
@@ -269,9 +263,25 @@ def main():
                     conteo["vencidas"] += 1
 
                 if estado_nuevo != estado_ant:
-                    actualizar_formulario(sheet, tipo, codigo, fecha_pres, estado_nuevo)
-                    escribir_log(sheet, nombre, codigo, estado_ant, estado_nuevo, fecha_pres)
-                    print(f"  [{codigo}] {estado_ant} → {estado_nuevo}")
+                    row_num = i + 9  # +8 de encabezados + 1 base
+                    actualizaciones.append({
+                        "row": row_num,
+                        "fecha": fecha_pres,
+                        "estado": estado_nuevo,
+                        "codigo": codigo,
+                        "estado_ant": estado_ant,
+                    })
+
+            # Escribir cambios en batch con pausas
+            for upd in actualizaciones:
+                ws_oblig.update_cell(upd["row"], 7,
+                    upd["fecha"].strftime("%d/%m/%Y") if upd["fecha"] else "")
+                time.sleep(1)
+                ws_oblig.update_cell(upd["row"], 8, upd["estado"])
+                time.sleep(1)
+                escribir_log(sheet, nombre, upd["codigo"],
+                             upd["estado_ant"], upd["estado"], upd["fecha"])
+                print(f"  [{upd['codigo']}] {upd['estado_ant']} → {upd['estado']}")
 
             actualizar_dashboard(sheet, nombre, conteo["total"],
                                  conteo["cumplidas"], conteo["proximas"],
