@@ -145,12 +145,17 @@ def actualizar_dashboard(sheet, cliente, total, cumplidas, proximas, vencidas):
 def scrape_cliente(page, usuario, password):
     presentaciones = []
 
-    # Login
+    # Paso 1: ir a la AIF y clickear INGRESAR
     page.goto("https://aif2.cnv.gov.ar/")
     page.wait_for_load_state("networkidle")
+    page.click("a[href*='Login'], a[href*='login'], input[value='INGRESAR'], a:has-text('INGRESAR'), button:has-text('INGRESAR')")
+    page.wait_for_load_state("networkidle")
+
+    # Paso 2: completar el formulario ADFS
+    page.wait_for_selector("input[name='UserName']", timeout=15000)
     page.fill("input[name='UserName']", usuario)
     page.fill("input[name='Password']", password)
-    page.click("button[type='submit']")
+    page.click("input[type='submit'][value='Iniciar sesión'], #submitButton, input[type='submit']")
     page.wait_for_load_state("networkidle")
 
     # Ir al historial y mostrar todos los registros
