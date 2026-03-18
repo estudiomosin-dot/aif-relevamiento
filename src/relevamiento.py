@@ -59,6 +59,7 @@ NOMBRE_A_CODIGO = {
     "ESTADOS CONTABLES - NIIF PARA BANCOS Y ENTIDADES FINANCIERAS": "ECF_004",
     "ESTADOS CONTABLES - SEGUROS": "ECF_005",
     "ESTADOS CONTABLES-FIDEICOMISOS Y AGENTES": "ECF_010",
+    "ESTADOS CONTABLES - AGENTES": "ECF_010",
 }
 
 
@@ -120,13 +121,16 @@ def actualizar_dashboard(sheet, cliente, total, cumplidas, proximas, vencidas):
     for i, fila in enumerate(datos):
         if fila and fila[1].strip() == cliente:
             row_num = i + 1
-            ws.update(f"E{row_num}:I{row_num}", [[
-                cumplidas,
-                proximas,
-                vencidas,
-                f"=E{row_num}/D{row_num}",
-                datetime.now().strftime("%d/%m/%Y %H:%M"),
-            ]])
+            ws.update(
+                range_name=f"E{row_num}:I{row_num}",
+                values=[[
+                    cumplidas,
+                    proximas,
+                    vencidas,
+                    f"=E{row_num}/D{row_num}",
+                    datetime.now().strftime("%d/%m/%Y %H:%M"),
+                ]]
+            )
             time.sleep(1)
             return
 
@@ -152,11 +156,14 @@ def scrape_cliente(page, usuario, password):
     page.goto("https://aif2.cnv.gov.ar/Administered/History")
     page.wait_for_load_state("networkidle")
     page.select_option("#date", "all")
-    page.wait_for_timeout(2000)
+
+    # Espera más larga para que la tabla cargue con todos los registros
+    page.wait_for_timeout(5000)
+    page.wait_for_selector("#grid-presentations tbody tr", timeout=20000)
 
     while True:
-        page.wait_for_selector("#grid-presentations tbody tr")
         filas = page.query_selector_all("#grid-presentations tbody tr")
+        print(f"  Filas en página actual: {len(filas)}")
 
         for fila in filas:
             celdas = fila.query_selector_all("td")
@@ -180,22 +187,17 @@ def scrape_cliente(page, usuario, password):
         if not siguiente:
             break
         siguiente.click()
-        page.wait_for_timeout(1500)
+        page.wait_for_timeout(2000)
+        page.wait_for_selector("#grid-presentations tbody tr", timeout=10000)
+
+    print(f"  Total presentaciones extraídas: {len(presentaciones)}")
 
     try:
         page.goto("https://aif2.cnv.gov.ar/Home/Logout")
     except Exception:
         pass
 
-    print("=== PRESENTACIONES EXTRAÍDAS ===")
-    nombres_unicos = sorted(set(p["nombre"] for p in presentaciones))
-    for n in nombres_unicos:
-        print(f"  {n}")
-    print(f"=== TOTAL: {len(presentaciones)} ===")
-
     return presentaciones
-
-  
 
 
 def main():
@@ -203,7 +205,6 @@ def main():
     clientes      = leer_clientes(sheet)
     clientes_json = json.loads(os.environ.get("CLIENTES_JSON", "{}"))
 
-    # Leer ambas hojas de obligaciones UNA SOLA VEZ
     ws_alyc    = sheet.worksheet("ALyC - OBLIGACIONES")
     ws_an      = sheet.worksheet("AN - OBLIGACIONES")
     datos_alyc = ws_alyc.get_all_values()
@@ -212,7 +213,6 @@ def main():
 
     with sync_playwright() as pw:
         browser = pw.chromium.launch(headless=True)
-        page    = browser.new_context(locale="es-AR").new_page()
 
         for cliente in clientes:
             nombre   = cliente["NOMBRE CLIENTE"]
@@ -226,12 +226,19 @@ def main():
                 continue
 
             print(f"[START] {nombre} ({tipo})")
+
+            # Contexto nuevo por cliente para evitar sesiones cruzadas
+            ctx  = browser.new_context(locale="es-AR")
+            page = ctx.new_page()
+
             try:
                 presentaciones = scrape_cliente(page, usuario, password)
-                print(f"  Presentaciones encontradas: {len(presentaciones)}")
             except Exception as e:
                 print(f"[ERROR] {nombre}: {e}")
+                ctx.close()
                 continue
+            finally:
+                ctx.close()
 
             obligaciones = datos_alyc if tipo == "ALyC" else datos_an
             ws_oblig     = ws_alyc if tipo == "ALyC" else ws_an
@@ -271,12 +278,12 @@ def main():
                 if estado_nuevo != estado_ant:
                     row_num = i + 9
                     actualizaciones.append({
-                        "row":        row_num,
-                        "fecha":      fecha_pres,
-                        "estado":     estado_nuevo,
-                        "codigo":     codigo,
+                        "row":         row_num,
+                        "fecha":       fecha_pres,
+                        "estado":      estado_nuevo,
+                        "codigo":      codigo,
                         "descripcion": descripcion,
-                        "estado_ant": estado_ant,
+                        "estado_ant":  estado_ant,
                     })
 
             for upd in actualizaciones:
