@@ -105,11 +105,11 @@ def escribir_log(sheet, cliente, codigo, descripcion, estado_ant, estado_nuevo, 
     ws.append_row([
         datetime.now().strftime("%d/%m/%Y %H:%M"),
         cliente,
-        codigo,
         f"{codigo} — {descripcion}",
         estado_ant,
         estado_nuevo,
         fecha_pres.strftime("%d/%m/%Y") if fecha_pres else "",
+        "",
     ])
     time.sleep(1)
 
@@ -196,8 +196,8 @@ def main():
     clientes_json = json.loads(os.environ.get("CLIENTES_JSON", "{}"))
 
     # Leer ambas hojas de obligaciones UNA SOLA VEZ
-    ws_alyc = sheet.worksheet("ALyC - OBLIGACIONES")
-    ws_an   = sheet.worksheet("AN - OBLIGACIONES")
+    ws_alyc    = sheet.worksheet("ALyC - OBLIGACIONES")
+    ws_an      = sheet.worksheet("AN - OBLIGACIONES")
     datos_alyc = ws_alyc.get_all_values()
     datos_an   = ws_an.get_all_values()
     time.sleep(2)
@@ -225,12 +225,9 @@ def main():
                 print(f"[ERROR] {nombre}: {e}")
                 continue
 
-            # Usar datos ya leídos en memoria
             obligaciones = datos_alyc if tipo == "ALyC" else datos_an
             ws_oblig     = ws_alyc if tipo == "ALyC" else ws_an
             conteo = {"total": 0, "cumplidas": 0, "proximas": 0, "vencidas": 0}
-
-            # Preparar batch de actualizaciones
             actualizaciones = []
 
             for i, fila in enumerate(obligaciones[8:]):
@@ -241,9 +238,10 @@ def main():
                 if len(fila) > 7 and fila[7].strip() == "N/A":
                     continue
 
-                codigo     = fila[1].strip()
-                plazo_str  = fila[5].strip() if len(fila) > 5 else ""
-                plazo_dias = int(plazo_str) if plazo_str.isdigit() else None
+                codigo      = fila[1].strip()
+                descripcion = fila[2].strip() if len(fila) > 2 else ""
+                plazo_str   = fila[5].strip() if len(fila) > 5 else ""
+                plazo_dias  = int(plazo_str) if plazo_str.isdigit() else None
 
                 match = next(
                     (p for p in presentaciones
@@ -263,23 +261,23 @@ def main():
                     conteo["vencidas"] += 1
 
                 if estado_nuevo != estado_ant:
-                    row_num = i + 9  # +8 de encabezados + 1 base
+                    row_num = i + 9
                     actualizaciones.append({
-                        "row": row_num,
-                        "fecha": fecha_pres,
-                        "estado": estado_nuevo,
-                        "codigo": codigo,
+                        "row":        row_num,
+                        "fecha":      fecha_pres,
+                        "estado":     estado_nuevo,
+                        "codigo":     codigo,
+                        "descripcion": descripcion,
                         "estado_ant": estado_ant,
                     })
 
-            # Escribir cambios en batch con pausas
             for upd in actualizaciones:
                 ws_oblig.update_cell(upd["row"], 7,
                     upd["fecha"].strftime("%d/%m/%Y") if upd["fecha"] else "")
                 time.sleep(1)
                 ws_oblig.update_cell(upd["row"], 8, upd["estado"])
                 time.sleep(1)
-                escribir_log(sheet, nombre, upd["codigo"],
+                escribir_log(sheet, nombre, upd["codigo"], upd["descripcion"],
                              upd["estado_ant"], upd["estado"], upd["fecha"])
                 print(f"  [{upd['codigo']}] {upd['estado_ant']} → {upd['estado']}")
 
