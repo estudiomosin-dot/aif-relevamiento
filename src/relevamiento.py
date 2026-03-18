@@ -100,16 +100,16 @@ def leer_clientes(sheet):
     return clientes
 
 
-def escribir_log(sheet, cliente, codigo, estado_ant, estado_nuevo, fecha_pres):
+def escribir_log(sheet, cliente, codigo, descripcion, estado_ant, estado_nuevo, fecha_pres):
     ws = sheet.worksheet("LOG")
     ws.append_row([
         datetime.now().strftime("%d/%m/%Y %H:%M"),
         cliente,
         codigo,
+        f"{codigo} — {descripcion}",
         estado_ant,
         estado_nuevo,
         fecha_pres.strftime("%d/%m/%Y") if fecha_pres else "",
-        "",
     ])
     time.sleep(1)
 
