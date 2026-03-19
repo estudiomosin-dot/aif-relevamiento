@@ -214,7 +214,6 @@ def aplicar_formato_pestana(sheet, ws):
     sheet_id = ws.id
     sid      = sheet.id
     requests = [
-        # Fila 2: encabezado cliente — azul oscuro
         {"repeatCell": {
             "range": {"sheetId": sheet_id, "startRowIndex": 1, "endRowIndex": 2,
                       "startColumnIndex": 0, "endColumnIndex": 14},
@@ -226,7 +225,6 @@ def aplicar_formato_pestana(sheet, ws):
             }},
             "fields": "userEnteredFormat(backgroundColor,textFormat,verticalAlignment)"
         }},
-        # Fila 4: relevamiento — gris
         {"repeatCell": {
             "range": {"sheetId": sheet_id, "startRowIndex": 3, "endRowIndex": 4,
                       "startColumnIndex": 0, "endColumnIndex": 14},
@@ -237,7 +235,6 @@ def aplicar_formato_pestana(sheet, ws):
             }},
             "fields": "userEnteredFormat(backgroundColor,textFormat)"
         }},
-        # Fila 8: encabezados — azul medio
         {"repeatCell": {
             "range": {"sheetId": sheet_id, "startRowIndex": 7, "endRowIndex": 8,
                       "startColumnIndex": 0, "endColumnIndex": 14},
@@ -251,7 +248,6 @@ def aplicar_formato_pestana(sheet, ws):
             }},
             "fields": "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment,wrapStrategy)"
         }},
-        # Formato condicional col L: CUMPLIDO
         {"addConditionalFormatRule": {"rule": {
             "ranges": [{"sheetId": sheet_id, "startRowIndex": 8,
                         "startColumnIndex": 11, "endColumnIndex": 12}],
@@ -261,7 +257,6 @@ def aplicar_formato_pestana(sheet, ws):
                            "textFormat": {"foregroundColor": color_rgb(39,98,33), "bold": True}}
             }
         }, "index": 0}},
-        # PRÓXIMO
         {"addConditionalFormatRule": {"rule": {
             "ranges": [{"sheetId": sheet_id, "startRowIndex": 8,
                         "startColumnIndex": 11, "endColumnIndex": 12}],
@@ -271,7 +266,6 @@ def aplicar_formato_pestana(sheet, ws):
                            "textFormat": {"foregroundColor": color_rgb(156,87,0), "bold": True}}
             }
         }, "index": 1}},
-        # VENCIDO
         {"addConditionalFormatRule": {"rule": {
             "ranges": [{"sheetId": sheet_id, "startRowIndex": 8,
                         "startColumnIndex": 11, "endColumnIndex": 12}],
@@ -281,7 +275,6 @@ def aplicar_formato_pestana(sheet, ws):
                            "textFormat": {"foregroundColor": color_rgb(156,0,6), "bold": True}}
             }
         }, "index": 2}},
-        # AUSENTE
         {"addConditionalFormatRule": {"rule": {
             "ranges": [{"sheetId": sheet_id, "startRowIndex": 8,
                         "startColumnIndex": 11, "endColumnIndex": 12}],
@@ -291,7 +284,6 @@ def aplicar_formato_pestana(sheet, ws):
                            "textFormat": {"foregroundColor": color_rgb(156,0,6), "bold": True}}
             }
         }, "index": 3}},
-        # Alturas
         {"updateDimensionProperties": {
             "range": {"sheetId": sheet_id, "dimension": "ROWS",
                       "startIndex": 1, "endIndex": 2},
@@ -316,14 +308,11 @@ def obtener_o_crear_pestana(sheet, nombre_pestana, plantilla_datos,
     try:
         ws = sheet.worksheet(nombre_pestana)
         all_vals = ws.get_all_values()
-
-        # Limpiar en una sola llamada batch
         batch = []
         for i, fila in enumerate(all_vals[8:], start=9):
-            if es_agrupador(fila):
-                continue
-            batch.append({"range": f"I{i}:L{i}",
-                          "values": [["", "", "", "PENDIENTE"]]})
+            if not es_agrupador(fila):
+                batch.append({"range": f"I{i}:L{i}",
+                              "values": [["", "", "", "PENDIENTE"]]})
         if batch:
             ws.batch_update(batch)
             time.sleep(2)
@@ -450,29 +439,48 @@ def scrape_cliente(page, usuario, password):
 
 
 def main():
-    sheet         = conectar_sheet()
-    clientes      = leer_clientes(sheet)
-    clientes_json = json.loads(os.environ.get("CLIENTES_JSON", "{}"))
+    sheet   = conectar_sheet()
+    clientes = leer_clientes(sheet)
 
+    # Cargar plantillas
     ws_alyc    = sheet.worksheet("ALyC - OBLIGACIONES")
     ws_an      = sheet.worksheet("AN - OBLIGACIONES")
     datos_alyc = ws_alyc.get_all_values()
     datos_an   = ws_an.get_all_values()
+    # AAGI — cargar solo si existe la pestaña
+    try:
+        datos_aagi = sheet.worksheet("AAGI - OBLIGACIONES").get_all_values()
+    except gspread.WorksheetNotFound:
+        datos_aagi = None
     time.sleep(2)
 
     with sync_playwright() as pw:
         browser = pw.chromium.launch(headless=True)
 
         for cliente in clientes:
-            nombre           = cliente["NOMBRE CLIENTE"]
-            tipo             = cliente["TIPO (AN/ALyC)"]
-            creds            = clientes_json.get(nombre, {})
-            usuario          = creds.get("usuario", "")
-            password         = creds.get("password", "")
+            nombre   = cliente.get("NOMBRE CLIENTE", "").strip()
+            tipo     = cliente.get("TIPO (AN/ALyC)", "").strip()
+            # ── Credenciales desde el Sheet ──────────────────────────────
+            usuario  = cliente.get("USUARIO AIF", "").strip()
+            password = cliente.get("CLAVE AIF", "").strip()
             cierre_ejercicio = obtener_cierre_ejercicio(cliente)
 
             if not usuario or not password:
-                print(f"[SKIP] {nombre}: sin credenciales")
+                print(f"[SKIP] {nombre}: sin credenciales en CONFIGURACIÓN")
+                continue
+
+            # Seleccionar plantilla según tipo
+            if tipo == "ALyC":
+                plantilla = datos_alyc
+            elif tipo == "AN":
+                plantilla = datos_an
+            elif tipo == "AAGI":
+                if datos_aagi is None:
+                    print(f"[SKIP] {nombre}: no existe pestaña 'AAGI - OBLIGACIONES'")
+                    continue
+                plantilla = datos_aagi
+            else:
+                print(f"[SKIP] {nombre}: tipo desconocido '{tipo}'")
                 continue
 
             print(f"[START] {nombre} ({tipo})")
@@ -490,7 +498,6 @@ def main():
 
             fecha_corta    = AHORA_AR.strftime("%d/%m")
             nombre_pestana = f"{nombre} · {tipo} · {fecha_corta}"
-            plantilla      = datos_alyc if tipo == "ALyC" else datos_an
             ws_cliente     = obtener_o_crear_pestana(
                 sheet, nombre_pestana, plantilla, nombre, tipo)
             time.sleep(2)
@@ -509,11 +516,6 @@ def main():
             actualizaciones = []
 
             for i, fila in enumerate(obligaciones[8:]):
-                # DEBUG — mostrá qué ve el script en cada fila
-                col_b = fila[1].strip() if len(fila) > 1 else ""
-                col_l = fila[11].strip() if len(fila) > 11 else ""
-                print(f"  [DEBUG] fila {i+9}: col_b='{col_b}' col_l='{col_l}' agrupador={es_agrupador(fila)}")
-
                 if es_agrupador(fila):
                     continue
 
