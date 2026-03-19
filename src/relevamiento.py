@@ -1,6 +1,5 @@
 import os, json, time
 from datetime import datetime, date, timedelta
-from calendar import monthrange
 import gspread
 from google.oauth2.service_account import Credentials
 from playwright.sync_api import sync_playwright
@@ -9,7 +8,9 @@ SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive",
 ]
-HOY       = date.today()
+
+AHORA_AR = datetime.utcnow() - timedelta(hours=3)
+HOY      = AHORA_AR.date()
 PROX_DIAS = 30
 
 NOMBRE_A_CODIGO = {
@@ -102,12 +103,10 @@ def fin_trimestre_anterior():
     return          date(HOY.year, 9, 30)
 
 def fin_mes_anterior():
-    first = HOY.replace(day=1)
-    return first - timedelta(days=1)
+    return HOY.replace(day=1) - timedelta(days=1)
 
 def miercoles_esta_semana():
-    days_since_monday = HOY.weekday()
-    monday = HOY - timedelta(days=days_since_monday)
+    monday = HOY - timedelta(days=HOY.weekday())
     return monday + timedelta(days=2)
 
 def calcular_vencimiento(fecha_base_str, plazo_dias, cierre_ejercicio=None):
@@ -143,15 +142,15 @@ def calcular_estado(fecha_pres, fecha_base_str, plazo_dias, cierre_ejercicio=Non
         return "CUMPLIDO" if fecha_pres else "AUSENTE"
     if vencimiento:
         dias = (vencimiento - HOY).days
-        if dias < 0:          return "VENCIDO"
-        if dias <= PROX_DIAS: return "PRÓXIMO"
+        if dias < 0:           return "VENCIDO"
+        if dias <= PROX_DIAS:  return "PRÓXIMO"
         return "CUMPLIDO"
     if fecha_pres is None:
         return "AUSENTE"
     if plazo_dias:
         dias = (fecha_pres + timedelta(days=plazo_dias) - HOY).days
-        if dias < 0:          return "VENCIDO"
-        if dias <= PROX_DIAS: return "PRÓXIMO"
+        if dias < 0:           return "VENCIDO"
+        if dias <= PROX_DIAS:  return "PRÓXIMO"
     return "CUMPLIDO"
 
 
@@ -191,7 +190,158 @@ def obtener_cierre_ejercicio(cliente_registro):
             continue
     return None
 
-def obtener_o_crear_pestana(sheet, nombre_pestana, plantilla_datos):
+
+def color_rgb(r, g, b):
+    return {"red": r/255, "green": g/255, "blue": b/255}
+
+def aplicar_formato_pestana(sheet, ws, nombre_cliente, tipo):
+    """Aplica formato básico a la pestaña del cliente via API de Sheets."""
+    sheet_id = ws.id
+    sid      = sheet.id
+
+    requests = [
+        # Fila 2: encabezado con nombre del cliente — fondo azul oscuro
+        {
+            "repeatCell": {
+                "range": {"sheetId": sheet_id, "startRowIndex": 1, "endRowIndex": 2,
+                          "startColumnIndex": 0, "endColumnIndex": 14},
+                "cell": {
+                    "userEnteredFormat": {
+                        "backgroundColor": color_rgb(31, 56, 100),
+                        "textFormat": {"foregroundColor": color_rgb(255,255,255),
+                                       "bold": True, "fontSize": 13,
+                                       "fontFamily": "Arial"},
+                        "verticalAlignment": "MIDDLE",
+                    }
+                },
+                "fields": "userEnteredFormat(backgroundColor,textFormat,verticalAlignment)"
+            }
+        },
+        # Fila 4: relevamiento — fondo gris claro
+        {
+            "repeatCell": {
+                "range": {"sheetId": sheet_id, "startRowIndex": 3, "endRowIndex": 4,
+                          "startColumnIndex": 0, "endColumnIndex": 14},
+                "cell": {
+                    "userEnteredFormat": {
+                        "backgroundColor": color_rgb(242,242,242),
+                        "textFormat": {"italic": True, "fontSize": 9,
+                                       "fontFamily": "Arial",
+                                       "foregroundColor": color_rgb(85,85,85)},
+                    }
+                },
+                "fields": "userEnteredFormat(backgroundColor,textFormat)"
+            }
+        },
+        # Fila 8: encabezados de columnas — azul medio
+        {
+            "repeatCell": {
+                "range": {"sheetId": sheet_id, "startRowIndex": 7, "endRowIndex": 8,
+                          "startColumnIndex": 0, "endColumnIndex": 14},
+                "cell": {
+                    "userEnteredFormat": {
+                        "backgroundColor": color_rgb(46, 117, 182),
+                        "textFormat": {"foregroundColor": color_rgb(255,255,255),
+                                       "bold": True, "fontSize": 9,
+                                       "fontFamily": "Arial"},
+                        "horizontalAlignment": "CENTER",
+                        "verticalAlignment": "MIDDLE",
+                        "wrapStrategy": "WRAP",
+                    }
+                },
+                "fields": "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment,wrapStrategy)"
+            }
+        },
+        # Formato condicional: CUMPLIDO → verde
+        {
+            "addConditionalFormatRule": {
+                "rule": {
+                    "ranges": [{"sheetId": sheet_id, "startRowIndex": 8,
+                                "startColumnIndex": 11, "endColumnIndex": 12}],
+                    "booleanRule": {
+                        "condition": {"type": "TEXT_EQ", "values": [{"userEnteredValue": "CUMPLIDO"}]},
+                        "format": {"backgroundColor": color_rgb(198,239,206),
+                                   "textFormat": {"foregroundColor": color_rgb(39,98,33), "bold": True}}
+                    }
+                },
+                "index": 0
+            }
+        },
+        # Formato condicional: PRÓXIMO → amarillo
+        {
+            "addConditionalFormatRule": {
+                "rule": {
+                    "ranges": [{"sheetId": sheet_id, "startRowIndex": 8,
+                                "startColumnIndex": 11, "endColumnIndex": 12}],
+                    "booleanRule": {
+                        "condition": {"type": "TEXT_EQ", "values": [{"userEnteredValue": "PRÓXIMO"}]},
+                        "format": {"backgroundColor": color_rgb(255,235,156),
+                                   "textFormat": {"foregroundColor": color_rgb(156,87,0), "bold": True}}
+                    }
+                },
+                "index": 1
+            }
+        },
+        # Formato condicional: VENCIDO → rojo
+        {
+            "addConditionalFormatRule": {
+                "rule": {
+                    "ranges": [{"sheetId": sheet_id, "startRowIndex": 8,
+                                "startColumnIndex": 11, "endColumnIndex": 12}],
+                    "booleanRule": {
+                        "condition": {"type": "TEXT_EQ", "values": [{"userEnteredValue": "VENCIDO"}]},
+                        "format": {"backgroundColor": color_rgb(255,199,206),
+                                   "textFormat": {"foregroundColor": color_rgb(156,0,6), "bold": True}}
+                    }
+                },
+                "index": 2
+            }
+        },
+        # Formato condicional: AUSENTE → rojo
+        {
+            "addConditionalFormatRule": {
+                "rule": {
+                    "ranges": [{"sheetId": sheet_id, "startRowIndex": 8,
+                                "startColumnIndex": 11, "endColumnIndex": 12}],
+                    "booleanRule": {
+                        "condition": {"type": "TEXT_EQ", "values": [{"userEnteredValue": "AUSENTE"}]},
+                        "format": {"backgroundColor": color_rgb(255,199,206),
+                                   "textFormat": {"foregroundColor": color_rgb(156,0,6), "bold": True}}
+                    }
+                },
+                "index": 3
+            }
+        },
+        # Altura fila 2
+        {
+            "updateDimensionProperties": {
+                "range": {"sheetId": sheet_id, "dimension": "ROWS",
+                          "startIndex": 1, "endIndex": 2},
+                "properties": {"pixelSize": 32},
+                "fields": "pixelSize"
+            }
+        },
+        # Altura fila 8
+        {
+            "updateDimensionProperties": {
+                "range": {"sheetId": sheet_id, "dimension": "ROWS",
+                          "startIndex": 7, "endIndex": 8},
+                "properties": {"pixelSize": 36},
+                "fields": "pixelSize"
+            }
+        },
+    ]
+
+    sheet.client.request(
+        "post",
+        f"https://sheets.googleapis.com/v4/spreadsheets/{sid}:batchUpdate",
+        json={"requests": requests}
+    )
+    time.sleep(1)
+
+
+def obtener_o_crear_pestana(sheet, nombre_pestana, plantilla_datos,
+                             nombre_cliente, tipo):
     try:
         ws = sheet.worksheet(nombre_pestana)
         all_vals = ws.get_all_values()
@@ -207,14 +357,25 @@ def obtener_o_crear_pestana(sheet, nombre_pestana, plantilla_datos):
         ws = sheet.add_worksheet(title=nombre_pestana, rows=250, cols=14)
         time.sleep(1)
         if plantilla_datos:
+            # Insertar desde columna A
             ws.update(range_name="A1", values=plantilla_datos)
             time.sleep(2)
+        # Escribir nombre del cliente en B2
+        ws.update_cell(2, 2,
+            f"{nombre_cliente}  ({tipo})  |  Régimen Informativo AIF — CNV")
+        time.sleep(1)
+        # Aplicar formato
+        try:
+            aplicar_formato_pestana(sheet, ws, nombre_cliente, tipo)
+        except Exception as e:
+            print(f"  [WARN] Formato no aplicado: {e}")
         return ws
+
 
 def escribir_log(sheet, cliente, codigo, descripcion, estado_ant, estado_nuevo, fecha_pres):
     ws = sheet.worksheet("LOG")
     ws.append_row([
-        datetime.now().strftime("%d/%m/%Y %H:%M"),
+        AHORA_AR.strftime("%d/%m/%Y %H:%M"),
         cliente,
         f"{codigo} — {descripcion}",
         estado_ant,
@@ -235,11 +396,12 @@ def actualizar_dashboard(sheet, cliente, total, cumplidas, proximas, vencidas):
                 values=[[
                     cumplidas, proximas, vencidas,
                     f"=E{row_num}/D{row_num}",
-                    datetime.now().strftime("%d/%m/%Y %H:%M"),
+                    AHORA_AR.strftime("%d/%m/%Y %H:%M"),
                 ]]
             )
             time.sleep(1)
             return
+
 
 def scrape_cliente(page, usuario, password):
     presentaciones = []
@@ -350,14 +512,16 @@ def main():
             finally:
                 ctx.close()
 
-            nombre_pestana = f"{nombre} · {tipo}"
+            fecha_corta    = AHORA_AR.strftime("%d/%m")
+            nombre_pestana = f"{nombre} · {tipo} · {fecha_corta}"
             plantilla      = datos_alyc if tipo == "ALyC" else datos_an
-            ws_cliente     = obtener_o_crear_pestana(sheet, nombre_pestana, plantilla)
+            ws_cliente     = obtener_o_crear_pestana(
+                sheet, nombre_pestana, plantilla, nombre, tipo)
             time.sleep(2)
 
             try:
                 ws_cliente.update_cell(4, 2,
-                    f"Relevamiento: {datetime.now().strftime('%d/%m/%Y %H:%M')}")
+                    f"Relevamiento: {AHORA_AR.strftime('%d/%m/%Y %H:%M')} (hora Argentina)")
                 time.sleep(1)
             except Exception:
                 pass
@@ -399,14 +563,14 @@ def main():
 
                 if estado_nuevo != estado_ant or (match and not fila[8].strip()):
                     actualizaciones.append({
-                        "row":        i + 9,
-                        "fecha":      fecha_pres,
-                        "hora":       hora_pres,
-                        "id":         id_pres,
-                        "estado":     estado_nuevo,
-                        "codigo":     codigo,
-                        "descripcion":descripcion,
-                        "estado_ant": estado_ant,
+                        "row":         i + 9,
+                        "fecha":       fecha_pres,
+                        "hora":        hora_pres,
+                        "id":          id_pres,
+                        "estado":      estado_nuevo,
+                        "codigo":      codigo,
+                        "descripcion": descripcion,
+                        "estado_ant":  estado_ant,
                     })
 
             for upd in actualizaciones:
