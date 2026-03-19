@@ -112,41 +112,109 @@ def miercoles_esta_semana():
     return monday + timedelta(days=2)
 
 def calcular_vencimiento(fecha_base_str, plazo_dias, cierre_ejercicio=None):
+    """Retorna la fecha de vencimiento vigente para hoy."""
     if not fecha_base_str or fecha_base_str in ("—", ""):
         return None
     fb = fecha_base_str.strip()
+
     if fb == "FIN_TRIMESTRE":
         base = fin_trimestre_anterior()
         return base + timedelta(days=plazo_dias) if plazo_dias else None
+
     if fb == "FIN_MES":
         base = fin_mes_anterior()
         return base + timedelta(days=plazo_dias) if plazo_dias else None
+
     if fb == "FIN_SEMANA":
         return miercoles_esta_semana()
+
+    # Fechas fijas anuales: siempre del año en curso
     if fb == "10/01":
         return date(HOY.year, 1, 10)
+
     if fb == "30/04":
         return date(HOY.year, 4, 30)
+
     if fb == "28/08":
         return date(HOY.year, 8, 28)
+
     if fb == "31/12":
         base = date(HOY.year - 1, 12, 31)
         return base + timedelta(days=plazo_dias) if plazo_dias else None
+
     if fb == "CIERRE_EJERCICIO":
         if cierre_ejercicio and plazo_dias:
             return cierre_ejercicio + timedelta(days=plazo_dias)
         return None
+
     return None
 
+
 def calcular_estado(fecha_pres, fecha_base_str, plazo_dias, cierre_ejercicio=None):
+    """
+    Determina el estado del formulario.
+    
+    Para periódicos con vencimiento calculable:
+      - Compara HOY con el vencimiento
+      - Si hay presentación, verifica que sea POSTERIOR al período base
+        (para no marcar como cumplido con una presentación vieja)
+    Para eventuales sin fecha base:
+      - CUMPLIDO si hay cualquier presentación, AUSENTE si no
+    """
     vencimiento = calcular_vencimiento(fecha_base_str, plazo_dias, cierre_ejercicio)
+
+    # Eventual puro — sin fecha base ni plazo
     if vencimiento is None and not plazo_dias:
         return "CUMPLIDO" if fecha_pres else "AUSENTE"
+
+    # Periódico con vencimiento calculable
     if vencimiento:
         dias = (vencimiento - HOY).days
-        if dias < 0:           return "VENCIDO"
-        if dias <= PROX_DIAS:  return "PRÓXIMO"
-        return "CUMPLIDO"
+
+        if fecha_pres:
+            # Calcular desde qué fecha debería ser la presentación válida
+            # (el período base del que surge el vencimiento)
+            fb = fecha_base_str.strip() if fecha_base_str else ""
+            periodo_inicio = None
+
+            if fb == "FIN_TRIMESTRE":
+                periodo_inicio = fin_trimestre_anterior()
+            elif fb == "FIN_MES":
+                periodo_inicio = fin_mes_anterior()
+            elif fb == "FIN_SEMANA":
+                monday = HOY - timedelta(days=HOY.weekday())
+                periodo_inicio = monday - timedelta(days=7)
+            elif fb in ("10/01", "30/04", "28/08"):
+                # Para fechas fijas anuales, la presentación debe ser de este año
+                periodo_inicio = date(HOY.year - 1, 12, 31)
+            elif fb == "31/12":
+                periodo_inicio = date(HOY.year - 2, 12, 31)
+            elif fb == "CIERRE_EJERCICIO":
+                if cierre_ejercicio:
+                    periodo_inicio = cierre_ejercicio - timedelta(days=365)
+
+            # Si la presentación es posterior al inicio del período → válida
+            if periodo_inicio and fecha_pres > periodo_inicio:
+                if dias < 0:           return "VENCIDO"
+                if dias <= PROX_DIAS:  return "PRÓXIMO"
+                return "CUMPLIDO"
+            elif periodo_inicio is None:
+                # No podemos determinar período → si hay presentación reciente, OK
+                if dias < 0:           return "VENCIDO"
+                if dias <= PROX_DIAS:  return "PRÓXIMO"
+                return "CUMPLIDO"
+            else:
+                # Presentación vieja — no cubre el período actual
+                if dias < 0:  return "VENCIDO"
+                if dias <= PROX_DIAS: return "PRÓXIMO"
+                return "AUSENTE"
+        else:
+            # Sin presentación
+            if dias < 0:           return "VENCIDO"
+            if dias <= PROX_DIAS:  return "PRÓXIMO"
+            return "AUSENTE"
+
+    # Fallback con plazo pero sin fecha base reconocida
     if fecha_pres is None:
         return "AUSENTE"
     if plazo_dias:
@@ -154,6 +222,37 @@ def calcular_estado(fecha_pres, fecha_base_str, plazo_dias, cierre_ejercicio=Non
         if dias < 0:           return "VENCIDO"
         if dias <= PROX_DIAS:  return "PRÓXIMO"
     return "CUMPLIDO"
+
+
+def debe_correr_hoy(frecuencia_str):
+    """Determina si el cliente debe relevarse hoy según su frecuencia."""
+    f = frecuencia_str.strip().upper() if frecuencia_str else "DIARIA"
+    if f in ("DIARIA", ""):
+        return True
+    if f == "LUNES":
+        return HOY.weekday() == 0
+    if f in ("MARTES",):
+        return HOY.weekday() == 1
+    if f in ("MIÉRCOLES", "MIERCOLES"):
+        return HOY.weekday() == 2
+    if f in ("JUEVES",):
+        return HOY.weekday() == 3
+    if f in ("VIERNES",):
+        return HOY.weekday() == 4
+    if f == "DIA 15":
+        return HOY.day == 15
+    if f in ("PRIMER DIA MES", "PRIMERO MES"):
+        return HOY.day == 1
+    if f in ("ULTIMO DIA MES", "ÚLTIMO DIA MES"):
+        manana = HOY + timedelta(days=1)
+        return manana.month != HOY.month
+    if f == "SEMANAL":
+        return HOY.weekday() == 0  # lunes por defecto
+    if f == "MENSUAL":
+        return HOY.day == 1
+    # Si no reconoce, corre igual
+    return True
+
 
 def es_agrupador(fila):
     if not any(fila):
@@ -190,6 +289,22 @@ def leer_clientes(sheet):
         if str(registro.get("ACTIVO (S/N)", "")).upper() == "S":
             clientes.append(registro)
     return clientes
+
+def leer_forzar_ejecucion(sheet):
+    """
+    Lee la celda de 'Ejecutar ahora' en CONFIGURACIÓN.
+    Si está en 'SI', retorna True y la limpia.
+    Espera encontrar en la fila 2 col A el label y col B el valor.
+    """
+    try:
+        ws  = sheet.worksheet("CONFIGURACIÓN")
+        val = ws.acell("B2").value
+        if val and val.strip().upper() == "SI":
+            ws.update_acell("B2", "")
+            return True
+    except Exception:
+        pass
+    return False
 
 def obtener_cierre_ejercicio(cliente_registro):
     cierre_str = cliente_registro.get("FECHA CIERRE EJERCICIO", "").strip()
@@ -317,14 +432,14 @@ def obtener_o_crear_pestana(sheet, nombre_pestana, plantilla_datos,
             ws.batch_update(batch)
             time.sleep(2)
         return ws
-
     except gspread.WorksheetNotFound:
         ws = sheet.add_worksheet(title=nombre_pestana, rows=250, cols=14)
         time.sleep(1)
         if plantilla_datos:
             ws.update(range_name="A1", values=plantilla_datos)
             time.sleep(2)
-        ws.update_cell(2, 2,
+        # Escribir nombre en A2 (col 1) para respetar merges
+        ws.update_cell(2, 1,
             f"{nombre_cliente}  ({tipo})  |  Régimen Informativo AIF — CNV")
         time.sleep(1)
         try:
@@ -439,15 +554,19 @@ def scrape_cliente(page, usuario, password):
 
 
 def main():
-    sheet   = conectar_sheet()
+    sheet    = conectar_sheet()
     clientes = leer_clientes(sheet)
+
+    # ── Verificar si se pidió ejecución forzada desde el Sheet
+    forzar = leer_forzar_ejecucion(sheet)
+    if forzar:
+        print("[INFO] Ejecución forzada desde el Sheet — ignorando frecuencias")
 
     # Cargar plantillas
     ws_alyc    = sheet.worksheet("ALyC - OBLIGACIONES")
     ws_an      = sheet.worksheet("AN - OBLIGACIONES")
     datos_alyc = ws_alyc.get_all_values()
     datos_an   = ws_an.get_all_values()
-    # AAGI — cargar solo si existe la pestaña
     try:
         datos_aagi = sheet.worksheet("AAGI - OBLIGACIONES").get_all_values()
     except gspread.WorksheetNotFound:
@@ -460,16 +579,20 @@ def main():
         for cliente in clientes:
             nombre   = cliente.get("NOMBRE CLIENTE", "").strip()
             tipo     = cliente.get("TIPO (AN/ALyC)", "").strip()
-            # ── Credenciales desde el Sheet ──────────────────────────────
             usuario  = cliente.get("USUARIO AIF", "").strip()
             password = cliente.get("CLAVE AIF", "").strip()
+            frecuencia = cliente.get("FRECUENCIA RELEV.", "DIARIA")
             cierre_ejercicio = obtener_cierre_ejercicio(cliente)
 
             if not usuario or not password:
-                print(f"[SKIP] {nombre}: sin credenciales en CONFIGURACIÓN")
+                print(f"[SKIP] {nombre}: sin credenciales")
                 continue
 
-            # Seleccionar plantilla según tipo
+            # Verificar frecuencia (salvo que se haya forzado desde el Sheet)
+            if not forzar and not debe_correr_hoy(frecuencia):
+                print(f"[SKIP] {nombre}: frecuencia '{frecuencia}' no corresponde hoy")
+                continue
+
             if tipo == "ALyC":
                 plantilla = datos_alyc
             elif tipo == "AN":
@@ -518,8 +641,7 @@ def main():
             for i, fila in enumerate(obligaciones[8:]):
                 if es_agrupador(fila):
                     continue
-
-                codigo      = fila[1].strip() if len(fila) > 1 else ""
+                codigo = fila[1].strip() if len(fila) > 1 else ""
                 if not codigo:
                     continue
 
