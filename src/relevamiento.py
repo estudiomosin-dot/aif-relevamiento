@@ -9,8 +9,8 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive",
 ]
 
-AHORA_AR = datetime.utcnow() - timedelta(hours=3)
-HOY      = AHORA_AR.date()
+AHORA_AR  = datetime.utcnow() - timedelta(hours=3)
+HOY       = AHORA_AR.date()
 PROX_DIAS = 30
 
 NOMBRE_A_CODIGO = {
@@ -94,6 +94,8 @@ NOMBRE_A_CODIGO = {
     "OFICIALES DE CUMPLIMIENTO ARTICULO 11": "PLAyFT_05",
 }
 
+CODIGOS_VALIDOS = set(NOMBRE_A_CODIGO.values())
+
 
 def fin_trimestre_anterior():
     m = HOY.month
@@ -154,6 +156,23 @@ def calcular_estado(fecha_pres, fecha_base_str, plazo_dias, cierre_ejercicio=Non
     return "CUMPLIDO"
 
 
+def es_agrupador(fila):
+    """Detecta si una fila es un separador de sección y no un formulario real."""
+    if not any(fila):
+        return True
+    col_a = fila[0].strip() if len(fila) > 0 else ""
+    col_b = fila[1].strip() if len(fila) > 1 else ""
+    if "▶" in col_a or "▶" in col_b:
+        return True
+    # Si col_b no es un código de formulario conocido y no está vacío, es agrupador
+    if col_b and col_b not in CODIGOS_VALIDOS:
+        # Podría ser un código PLAyFT_ que no está en NOMBRE_A_CODIGO
+        if not (col_b.startswith("MUG_") or col_b.startswith("AGE_") or
+                col_b.startswith("ECF_") or col_b.startswith("PLAyFT_")):
+            return True
+    return False
+
+
 def conectar_sheet():
     creds_dict = json.loads(os.environ["GOOGLE_CREDENTIALS"])
     creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
@@ -194,125 +213,179 @@ def obtener_cierre_ejercicio(cliente_registro):
 def color_rgb(r, g, b):
     return {"red": r/255, "green": g/255, "blue": b/255}
 
-def aplicar_formato_pestana(sheet, ws, nombre_cliente, tipo):
-    """Aplica formato básico a la pestaña del cliente via API de Sheets."""
+def aplicar_formato_pestana(sheet, ws):
     sheet_id = ws.id
     sid      = sheet.id
-
     requests = [
-        # Fila 2: encabezado con nombre del cliente — fondo azul oscuro
+        # Fila 2: encabezado cliente — azul oscuro
         {
             "repeatCell": {
                 "range": {"sheetId": sheet_id, "startRowIndex": 1, "endRowIndex": 2,
                           "startColumnIndex": 0, "endColumnIndex": 14},
-                "cell": {
-                    "userEnteredFormat": {
-                        "backgroundColor": color_rgb(31, 56, 100),
-                        "textFormat": {"foregroundColor": color_rgb(255,255,255),
-                                       "bold": True, "fontSize": 13,
-                                       "fontFamily": "Arial"},
-                        "verticalAlignment": "MIDDLE",
-                    }
-                },
+                "cell": {"userEnteredFormat": {
+                    "backgroundColor": color_rgb(31, 56, 100),
+                    "textFormat": {"foregroundColor": color_rgb(255,255,255),
+                                   "bold": True, "fontSize": 13, "fontFamily": "Arial"},
+                    "verticalAlignment": "MIDDLE",
+                }},
                 "fields": "userEnteredFormat(backgroundColor,textFormat,verticalAlignment)"
             }
         },
-        # Fila 4: relevamiento — fondo gris claro
+        # Fila 4: relevamiento — gris
         {
             "repeatCell": {
                 "range": {"sheetId": sheet_id, "startRowIndex": 3, "endRowIndex": 4,
                           "startColumnIndex": 0, "endColumnIndex": 14},
-                "cell": {
-                    "userEnteredFormat": {
-                        "backgroundColor": color_rgb(242,242,242),
-                        "textFormat": {"italic": True, "fontSize": 9,
-                                       "fontFamily": "Arial",
-                                       "foregroundColor": color_rgb(85,85,85)},
-                    }
-                },
+                "cell": {"userEnteredFormat": {
+                    "backgroundColor": color_rgb(242,242,242),
+                    "textFormat": {"italic": True, "fontSize": 9, "fontFamily": "Arial",
+                                   "foregroundColor": color_rgb(85,85,85)},
+                }},
                 "fields": "userEnteredFormat(backgroundColor,textFormat)"
             }
         },
-        # Fila 8: encabezados de columnas — azul medio
+        # Fila 6: leyenda de estados — colores
+        {
+            "repeatCell": {
+                "range": {"sheetId": sheet_id, "startRowIndex": 5, "endRowIndex": 6,
+                          "startColumnIndex": 2, "endColumnIndex": 3},
+                "cell": {"userEnteredFormat": {
+                    "backgroundColor": color_rgb(198,239,206),
+                    "textFormat": {"foregroundColor": color_rgb(39,98,33), "bold": True,
+                                   "fontSize": 9, "fontFamily": "Arial"},
+                    "horizontalAlignment": "CENTER",
+                }},
+                "fields": "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)"
+            }
+        },
+        {
+            "repeatCell": {
+                "range": {"sheetId": sheet_id, "startRowIndex": 5, "endRowIndex": 6,
+                          "startColumnIndex": 3, "endColumnIndex": 4},
+                "cell": {"userEnteredFormat": {
+                    "backgroundColor": color_rgb(255,235,156),
+                    "textFormat": {"foregroundColor": color_rgb(156,87,0), "bold": True,
+                                   "fontSize": 9, "fontFamily": "Arial"},
+                    "horizontalAlignment": "CENTER",
+                }},
+                "fields": "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)"
+            }
+        },
+        {
+            "repeatCell": {
+                "range": {"sheetId": sheet_id, "startRowIndex": 5, "endRowIndex": 6,
+                          "startColumnIndex": 4, "endColumnIndex": 5},
+                "cell": {"userEnteredFormat": {
+                    "backgroundColor": color_rgb(255,199,206),
+                    "textFormat": {"foregroundColor": color_rgb(156,0,6), "bold": True,
+                                   "fontSize": 9, "fontFamily": "Arial"},
+                    "horizontalAlignment": "CENTER",
+                }},
+                "fields": "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)"
+            }
+        },
+        {
+            "repeatCell": {
+                "range": {"sheetId": sheet_id, "startRowIndex": 5, "endRowIndex": 6,
+                          "startColumnIndex": 5, "endColumnIndex": 6},
+                "cell": {"userEnteredFormat": {
+                    "backgroundColor": color_rgb(255,199,206),
+                    "textFormat": {"foregroundColor": color_rgb(156,0,6), "bold": True,
+                                   "fontSize": 9, "fontFamily": "Arial"},
+                    "horizontalAlignment": "CENTER",
+                }},
+                "fields": "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)"
+            }
+        },
+        # Fila 8: encabezados — azul medio
         {
             "repeatCell": {
                 "range": {"sheetId": sheet_id, "startRowIndex": 7, "endRowIndex": 8,
                           "startColumnIndex": 0, "endColumnIndex": 14},
-                "cell": {
-                    "userEnteredFormat": {
-                        "backgroundColor": color_rgb(46, 117, 182),
-                        "textFormat": {"foregroundColor": color_rgb(255,255,255),
-                                       "bold": True, "fontSize": 9,
-                                       "fontFamily": "Arial"},
-                        "horizontalAlignment": "CENTER",
-                        "verticalAlignment": "MIDDLE",
-                        "wrapStrategy": "WRAP",
-                    }
-                },
+                "cell": {"userEnteredFormat": {
+                    "backgroundColor": color_rgb(46, 117, 182),
+                    "textFormat": {"foregroundColor": color_rgb(255,255,255),
+                                   "bold": True, "fontSize": 9, "fontFamily": "Arial"},
+                    "horizontalAlignment": "CENTER",
+                    "verticalAlignment": "MIDDLE",
+                    "wrapStrategy": "WRAP",
+                }},
                 "fields": "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment,wrapStrategy)"
             }
         },
-        # Formato condicional: CUMPLIDO → verde
+        # Formato condicional col L (índice 11): CUMPLIDO
         {
             "addConditionalFormatRule": {
                 "rule": {
                     "ranges": [{"sheetId": sheet_id, "startRowIndex": 8,
                                 "startColumnIndex": 11, "endColumnIndex": 12}],
                     "booleanRule": {
-                        "condition": {"type": "TEXT_EQ", "values": [{"userEnteredValue": "CUMPLIDO"}]},
-                        "format": {"backgroundColor": color_rgb(198,239,206),
-                                   "textFormat": {"foregroundColor": color_rgb(39,98,33), "bold": True}}
+                        "condition": {"type": "TEXT_EQ",
+                                      "values": [{"userEnteredValue": "CUMPLIDO"}]},
+                        "format": {
+                            "backgroundColor": color_rgb(198,239,206),
+                            "textFormat": {"foregroundColor": color_rgb(39,98,33),
+                                           "bold": True}
+                        }
                     }
-                },
-                "index": 0
+                }, "index": 0
             }
         },
-        # Formato condicional: PRÓXIMO → amarillo
+        # PRÓXIMO
         {
             "addConditionalFormatRule": {
                 "rule": {
                     "ranges": [{"sheetId": sheet_id, "startRowIndex": 8,
                                 "startColumnIndex": 11, "endColumnIndex": 12}],
                     "booleanRule": {
-                        "condition": {"type": "TEXT_EQ", "values": [{"userEnteredValue": "PRÓXIMO"}]},
-                        "format": {"backgroundColor": color_rgb(255,235,156),
-                                   "textFormat": {"foregroundColor": color_rgb(156,87,0), "bold": True}}
+                        "condition": {"type": "TEXT_EQ",
+                                      "values": [{"userEnteredValue": "PRÓXIMO"}]},
+                        "format": {
+                            "backgroundColor": color_rgb(255,235,156),
+                            "textFormat": {"foregroundColor": color_rgb(156,87,0),
+                                           "bold": True}
+                        }
                     }
-                },
-                "index": 1
+                }, "index": 1
             }
         },
-        # Formato condicional: VENCIDO → rojo
+        # VENCIDO
         {
             "addConditionalFormatRule": {
                 "rule": {
                     "ranges": [{"sheetId": sheet_id, "startRowIndex": 8,
                                 "startColumnIndex": 11, "endColumnIndex": 12}],
                     "booleanRule": {
-                        "condition": {"type": "TEXT_EQ", "values": [{"userEnteredValue": "VENCIDO"}]},
-                        "format": {"backgroundColor": color_rgb(255,199,206),
-                                   "textFormat": {"foregroundColor": color_rgb(156,0,6), "bold": True}}
+                        "condition": {"type": "TEXT_EQ",
+                                      "values": [{"userEnteredValue": "VENCIDO"}]},
+                        "format": {
+                            "backgroundColor": color_rgb(255,199,206),
+                            "textFormat": {"foregroundColor": color_rgb(156,0,6),
+                                           "bold": True}
+                        }
                     }
-                },
-                "index": 2
+                }, "index": 2
             }
         },
-        # Formato condicional: AUSENTE → rojo
+        # AUSENTE
         {
             "addConditionalFormatRule": {
                 "rule": {
                     "ranges": [{"sheetId": sheet_id, "startRowIndex": 8,
                                 "startColumnIndex": 11, "endColumnIndex": 12}],
                     "booleanRule": {
-                        "condition": {"type": "TEXT_EQ", "values": [{"userEnteredValue": "AUSENTE"}]},
-                        "format": {"backgroundColor": color_rgb(255,199,206),
-                                   "textFormat": {"foregroundColor": color_rgb(156,0,6), "bold": True}}
+                        "condition": {"type": "TEXT_EQ",
+                                      "values": [{"userEnteredValue": "AUSENTE"}]},
+                        "format": {
+                            "backgroundColor": color_rgb(255,199,206),
+                            "textFormat": {"foregroundColor": color_rgb(156,0,6),
+                                           "bold": True}
+                        }
                     }
-                },
-                "index": 3
+                }, "index": 3
             }
         },
-        # Altura fila 2
+        # Alturas de fila
         {
             "updateDimensionProperties": {
                 "range": {"sheetId": sheet_id, "dimension": "ROWS",
@@ -321,7 +394,6 @@ def aplicar_formato_pestana(sheet, ws, nombre_cliente, tipo):
                 "fields": "pixelSize"
             }
         },
-        # Altura fila 8
         {
             "updateDimensionProperties": {
                 "range": {"sheetId": sheet_id, "dimension": "ROWS",
@@ -331,7 +403,6 @@ def aplicar_formato_pestana(sheet, ws, nombre_cliente, tipo):
             }
         },
     ]
-
     sheet.client.request(
         "post",
         f"https://sheets.googleapis.com/v4/spreadsheets/{sid}:batchUpdate",
@@ -344,29 +415,28 @@ def obtener_o_crear_pestana(sheet, nombre_pestana, plantilla_datos,
                              nombre_cliente, tipo):
     try:
         ws = sheet.worksheet(nombre_pestana)
+        # Limpiar solo filas de formularios reales (no agrupadores)
         all_vals = ws.get_all_values()
         for i, fila in enumerate(all_vals[8:], start=9):
-            if fila and len(fila) > 1 and fila[1] and not fila[1].startswith("▶"):
-                ws.update_cell(i, 9,  "")
-                ws.update_cell(i, 10, "")
-                ws.update_cell(i, 11, "")
-                ws.update_cell(i, 12, "PENDIENTE")
-                time.sleep(0.3)
+            if es_agrupador(fila):
+                continue
+            ws.update_cell(i, 9,  "")
+            ws.update_cell(i, 10, "")
+            ws.update_cell(i, 11, "")
+            ws.update_cell(i, 12, "PENDIENTE")
+            time.sleep(0.3)
         return ws
     except gspread.WorksheetNotFound:
         ws = sheet.add_worksheet(title=nombre_pestana, rows=250, cols=14)
         time.sleep(1)
         if plantilla_datos:
-            # Insertar desde columna A
             ws.update(range_name="A1", values=plantilla_datos)
             time.sleep(2)
-        # Escribir nombre del cliente en B2
         ws.update_cell(2, 2,
             f"{nombre_cliente}  ({tipo})  |  Régimen Informativo AIF — CNV")
         time.sleep(1)
-        # Aplicar formato
         try:
-            aplicar_formato_pestana(sheet, ws, nombre_cliente, tipo)
+            aplicar_formato_pestana(sheet, ws)
         except Exception as e:
             print(f"  [WARN] Formato no aplicado: {e}")
         return ws
@@ -533,19 +603,22 @@ def main():
             actualizaciones = []
 
             for i, fila in enumerate(obligaciones[8:]):
-                if not fila or not fila[1]:
-                    continue
-                if fila[1].startswith("▶"):
-                    continue
-                if len(fila) > 11 and fila[11].strip() == "N/A":
+                # Fix 3: saltar agrupadores correctamente
+                if es_agrupador(fila):
                     continue
 
-                codigo      = fila[1].strip()
-                descripcion = fila[2].strip() if len(fila) > 2 else ""
-                plazo_str   = fila[6].strip() if len(fila) > 6 else ""
-                plazo_dias  = int(plazo_str) if plazo_str.isdigit() else None
-                fecha_base  = fila[7].strip() if len(fila) > 7 else ""
+                codigo      = fila[1].strip() if len(fila) > 1 else ""
+                if not codigo:
+                    continue
+
+                descripcion = fila[2].strip()  if len(fila) > 2  else ""
+                plazo_str   = fila[6].strip()  if len(fila) > 6  else ""
+                plazo_dias  = int(plazo_str)   if plazo_str.isdigit() else None
+                fecha_base  = fila[7].strip()  if len(fila) > 7  else ""
                 estado_ant  = fila[11].strip() if len(fila) > 11 else ""
+
+                if estado_ant == "N/A":
+                    continue
 
                 match      = next((p for p in presentaciones
                                    if NOMBRE_A_CODIGO.get(p["nombre"]) == codigo), None)
