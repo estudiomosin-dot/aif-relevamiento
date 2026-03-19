@@ -215,6 +215,12 @@ def scrape_cliente(page, usuario, password):
     except Exception:
         pass
 
+    nombres_unicos = sorted(set(p["nombre"] for p in presentaciones))
+    print("=== NOMBRES EXTRAÍDOS DE LA AIF ===")
+    for n in nombres_unicos:
+        print(f"  '{n}'")
+    print("===================================")
+
     return presentaciones
 
 
