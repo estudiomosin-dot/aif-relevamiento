@@ -74,7 +74,6 @@ NOMBRE_A_CODIGO = {
     "ESTADOS CONTABLES - NIIF": "ECF_003",
     "ESTADOS CONTABLES - NIIF PARA BANCOS Y ENTIDADES FINANCIERAS": "ECF_004",
     "BALANCE CONSOLIDADO - MIGRACION": "ECF_003",
-    # PLAyFT
     "MANUAL DE PROCEDIMIENTOS PARA LA PLA/FT ART. 8": "PLAyFT_06",
     "MANUALES DE PROCEDIMIENTO - MIGRACION": "PLAyFT_06",
     "CÓDIGO DE CONDUCTA PARA LA PLA/FT ART. 20": "PLAyFT_07",
@@ -94,113 +93,73 @@ NOMBRE_A_CODIGO = {
     "OFICIALES DE CUMPLIMIENTO ARTICULO 11": "PLAyFT_05",
 }
 
-# ── Lógica de vencimiento ────────────────────────────────────────────────
+
 def fin_trimestre_anterior():
-    """Último día del trimestre anterior al día de hoy."""
     m = HOY.month
-    if m <= 3:   return date(HOY.year - 1, 12, 31)
-    if m <= 6:   return date(HOY.year, 3, 31)
-    if m <= 9:   return date(HOY.year, 6, 30)
-    return           date(HOY.year, 9, 30)
+    if m <= 3:  return date(HOY.year - 1, 12, 31)
+    if m <= 6:  return date(HOY.year, 3, 31)
+    if m <= 9:  return date(HOY.year, 6, 30)
+    return          date(HOY.year, 9, 30)
 
 def fin_mes_anterior():
-    """Último día del mes anterior."""
     first = HOY.replace(day=1)
     return first - timedelta(days=1)
 
-def fin_semana_anterior():
-    """Último día (domingo) de la semana anterior."""
-    days_since_monday = HOY.weekday()
-    last_monday = HOY - timedelta(days=days_since_monday)
-    return last_monday - timedelta(days=1)  # domingo anterior
-
 def miercoles_esta_semana():
-    """Miércoles de la semana actual (vencimiento AGE_025 y AGE_029)."""
     days_since_monday = HOY.weekday()
     monday = HOY - timedelta(days=days_since_monday)
-    return monday + timedelta(days=2)  # miércoles
+    return monday + timedelta(days=2)
 
 def calcular_vencimiento(fecha_base_str, plazo_dias, cierre_ejercicio=None):
-    """
-    Calcula la fecha de vencimiento según la fecha base y plazo.
-    Retorna date o None si no aplica.
-    """
     if not fecha_base_str or fecha_base_str in ("—", ""):
-        return None  # eventual puro — sin vencimiento fijo
-
+        return None
     fb = fecha_base_str.strip()
-
     if fb == "FIN_TRIMESTRE":
         base = fin_trimestre_anterior()
-    elif fb == "FIN_MES":
+        return base + timedelta(days=plazo_dias) if plazo_dias else None
+    if fb == "FIN_MES":
         base = fin_mes_anterior()
-    elif fb == "FIN_SEMANA":
-        # Para semanales el vencimiento es el miércoles de la semana en curso
+        return base + timedelta(days=plazo_dias) if plazo_dias else None
+    if fb == "FIN_SEMANA":
         return miercoles_esta_semana()
-    elif fb == "10/01":
-        # Vence el 10 de enero de cada año
+    if fb == "10/01":
         return date(HOY.year, 1, 10)
-    elif fb == "30/04":
+    if fb == "30/04":
         return date(HOY.year, 4, 30)
-    elif fb == "28/08":
+    if fb == "28/08":
         return date(HOY.year, 8, 28)
-    elif fb == "31/12":
+    if fb == "31/12":
         base = date(HOY.year - 1, 12, 31)
-    elif fb == "CIERRE_EJERCICIO":
-        if cierre_ejercicio:
-            base = cierre_ejercicio
-        else:
-            return None
-    else:
+        return base + timedelta(days=plazo_dias) if plazo_dias else None
+    if fb == "CIERRE_EJERCICIO":
+        if cierre_ejercicio and plazo_dias:
+            return cierre_ejercicio + timedelta(days=plazo_dias)
         return None
-
-    if plazo_dias:
-        return base + timedelta(days=plazo_dias)
     return None
 
-
 def calcular_estado(fecha_pres, fecha_base_str, plazo_dias, cierre_ejercicio=None):
-    """
-    Determina el estado del formulario.
-    Para eventuales sin fecha_base: CUMPLIDO si hay presentación, AUSENTE si no.
-    Para periódicos: compara HOY con el vencimiento calculado.
-    """
     vencimiento = calcular_vencimiento(fecha_base_str, plazo_dias, cierre_ejercicio)
-
-    # Eventual puro (sin fecha base ni plazo)
-    if vencimiento is None and (not plazo_dias):
-        if fecha_pres is None:
-            return "AUSENTE"
-        return "CUMPLIDO"
-
-    # Periódico con fecha de vencimiento calculable
+    if vencimiento is None and not plazo_dias:
+        return "CUMPLIDO" if fecha_pres else "AUSENTE"
     if vencimiento:
-        dias_restantes = (vencimiento - HOY).days
-        if dias_restantes < 0:
-            return "VENCIDO"
-        if dias_restantes <= PROX_DIAS:
-            return "PRÓXIMO"
+        dias = (vencimiento - HOY).days
+        if dias < 0:          return "VENCIDO"
+        if dias <= PROX_DIAS: return "PRÓXIMO"
         return "CUMPLIDO"
-
-    # Fallback: si hay presentación reciente
     if fecha_pres is None:
         return "AUSENTE"
     if plazo_dias:
-        venc_desde_pres = fecha_pres + timedelta(days=plazo_dias)
-        dias = (venc_desde_pres - HOY).days
-        if dias < 0:   return "VENCIDO"
+        dias = (fecha_pres + timedelta(days=plazo_dias) - HOY).days
+        if dias < 0:          return "VENCIDO"
         if dias <= PROX_DIAS: return "PRÓXIMO"
-        return "CUMPLIDO"
     return "CUMPLIDO"
 
 
-# ── Google Sheets ────────────────────────────────────────────────────────
 def conectar_sheet():
     creds_dict = json.loads(os.environ["GOOGLE_CREDENTIALS"])
     creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
     gc    = gspread.authorize(creds)
     return gc.open_by_key(os.environ["GOOGLE_SHEET_ID"])
-
 
 def leer_clientes(sheet):
     ws       = sheet.worksheet("CONFIGURACIÓN")
@@ -217,32 +176,24 @@ def leer_clientes(sheet):
             clientes.append(registro)
     return clientes
 
-
 def obtener_cierre_ejercicio(cliente_registro):
-    """Lee la fecha de cierre de ejercicio de la fila del cliente en CONFIGURACIÓN."""
     cierre_str = cliente_registro.get("FECHA CIERRE EJERCICIO", "").strip()
     if not cierre_str:
         return None
-    for fmt in ("%d/%m/%Y", "%d/%m", "%Y-%m-%d"):
+    for fmt in ("%d/%m/%Y", "%d/%m"):
         try:
             d = datetime.strptime(cierre_str, fmt)
-            # Si solo tiene día/mes, usar el año anterior más cercano
             if fmt == "%d/%m":
-                d = d.replace(year=HOY.year - 1 if d.month > HOY.month else HOY.year)
+                anio = HOY.year - 1 if d.month > HOY.month else HOY.year
+                d = d.replace(year=anio)
             return d.date()
         except ValueError:
             continue
     return None
 
-
-def obtener_o_crear_pestana(sheet, nombre_pestana, tipo, nombre_cliente):
-    """
-    Crea la pestaña del cliente copiando la plantilla con formato completo.
-    Si ya existe, la limpia y actualiza.
-    """
+def obtener_o_crear_pestana(sheet, nombre_pestana, plantilla_datos):
     try:
         ws = sheet.worksheet(nombre_pestana)
-        # Limpiar cols I, J, K, L desde fila 9
         all_vals = ws.get_all_values()
         for i, fila in enumerate(all_vals[8:], start=9):
             if fila and len(fila) > 1 and fila[1] and not fila[1].startswith("▶"):
@@ -252,37 +203,13 @@ def obtener_o_crear_pestana(sheet, nombre_pestana, tipo, nombre_cliente):
                 ws.update_cell(i, 12, "PENDIENTE")
                 time.sleep(0.3)
         return ws
-
     except gspread.WorksheetNotFound:
-        # Copiar plantilla con formato usando la API de Sheets
-        nombre_plantilla = "ALyC - OBLIGACIONES" if tipo == "ALyC" else "AN - OBLIGACIONES"
-        ws_plantilla = sheet.worksheet(nombre_plantilla)
-
-        # Duplicar la hoja plantilla via API
-        body = {
-            "destinationSpreadsheetId": sheet.id
-        }
-        sheet.client.request(
-            "post",
-            f"https://sheets.googleapis.com/v4/spreadsheets/{sheet.id}"
-            f"/sheets/{ws_plantilla.id}:copyTo",
-            json=body
-        )
-        time.sleep(2)
-
-        # La copia se llama "Copy of <nombre_plantilla>" — renombrarla
-        copia = sheet.worksheet(f"Copy of {nombre_plantilla}")
-        copia.update_title(nombre_pestana)
+        ws = sheet.add_worksheet(title=nombre_pestana, rows=250, cols=14)
         time.sleep(1)
-
-        # Actualizar celda B2 con nombre del cliente
-        copia.update_cell(2, 2,
-            f"RÉGIMEN INFORMATIVO — {nombre_cliente} ({tipo})  |  "
-            f"Art. 11 Tít. XV + Tít. XI (PLAyFT) — Normas CNV (N.T. 2013 y mod.)")
-        time.sleep(1)
-
-        return copia
-
+        if plantilla_datos:
+            ws.update(range_name="A1", values=plantilla_datos)
+            time.sleep(2)
+        return ws
 
 def escribir_log(sheet, cliente, codigo, descripcion, estado_ant, estado_nuevo, fecha_pres):
     ws = sheet.worksheet("LOG")
@@ -296,7 +223,6 @@ def escribir_log(sheet, cliente, codigo, descripcion, estado_ant, estado_nuevo, 
         "",
     ])
     time.sleep(1)
-
 
 def actualizar_dashboard(sheet, cliente, total, cumplidas, proximas, vencidas):
     ws    = sheet.worksheet("DASHBOARD")
@@ -315,11 +241,8 @@ def actualizar_dashboard(sheet, cliente, total, cumplidas, proximas, vencidas):
             time.sleep(1)
             return
 
-
-# ── Scraping AIF ─────────────────────────────────────────────────────────
 def scrape_cliente(page, usuario, password):
     presentaciones = []
-
     adfs_url = (
         "https://cnvfs.cnv.gov.ar/adfs/ls/"
         "?wtrealm=https://aif2.cnv.gov.ar"
@@ -340,7 +263,6 @@ def scrape_cliente(page, usuario, password):
     filas_iniciales = len(page.query_selector_all("#grid-presentations tbody tr"))
 
     page.select_option("#date", "all")
-
     for intento in range(60):
         page.wait_for_timeout(1000)
         n = len(page.query_selector_all("#grid-presentations tbody tr"))
@@ -355,12 +277,10 @@ def scrape_cliente(page, usuario, password):
     while True:
         filas = page.query_selector_all("#grid-presentations tbody tr")
         print(f"  Filas en página actual: {len(filas)}")
-
         for fila in filas:
             celdas = fila.query_selector_all("td")
             if len(celdas) < 7:
                 continue
-            # col 0: ID presentación
             pres_id   = celdas[0].inner_text().strip()
             fecha_str = celdas[1].inner_text().strip()
             hora_str  = celdas[2].inner_text().strip()
@@ -376,7 +296,6 @@ def scrape_cliente(page, usuario, password):
                 "hora":   hora_str,
                 "id":     pres_id,
             })
-
         siguiente = page.query_selector("li.next:not(.disabled) a[data-page='next']")
         if not siguiente:
             break
@@ -385,16 +304,13 @@ def scrape_cliente(page, usuario, password):
         page.wait_for_selector("#grid-presentations tbody tr", timeout=10000)
 
     print(f"  Total presentaciones extraídas: {len(presentaciones)}")
-
     try:
         page.goto("https://aif2.cnv.gov.ar/Home/Logout")
     except Exception:
         pass
-
     return presentaciones
 
 
-# ── Main ─────────────────────────────────────────────────────────────────
 def main():
     sheet         = conectar_sheet()
     clientes      = leer_clientes(sheet)
@@ -410,11 +326,11 @@ def main():
         browser = pw.chromium.launch(headless=True)
 
         for cliente in clientes:
-            nombre   = cliente["NOMBRE CLIENTE"]
-            tipo     = cliente["TIPO (AN/ALyC)"]
-            creds    = clientes_json.get(nombre, {})
-            usuario  = creds.get("usuario", "")
-            password = creds.get("password", "")
+            nombre           = cliente["NOMBRE CLIENTE"]
+            tipo             = cliente["TIPO (AN/ALyC)"]
+            creds            = clientes_json.get(nombre, {})
+            usuario          = creds.get("usuario", "")
+            password         = creds.get("password", "")
             cierre_ejercicio = obtener_cierre_ejercicio(cliente)
 
             if not usuario or not password:
@@ -422,7 +338,6 @@ def main():
                 continue
 
             print(f"[START] {nombre} ({tipo})")
-
             ctx  = browser.new_context(locale="es-AR")
             page = ctx.new_page()
 
@@ -435,13 +350,11 @@ def main():
             finally:
                 ctx.close()
 
-            # Obtener o crear pestaña del cliente
             nombre_pestana = f"{nombre} · {tipo}"
             plantilla      = datos_alyc if tipo == "ALyC" else datos_an
-            ws_cliente = obtener_o_crear_pestana(sheet, nombre_pestana, tipo, nombre)
+            ws_cliente     = obtener_o_crear_pestana(sheet, nombre_pestana, plantilla)
             time.sleep(2)
 
-            # Actualizar fecha de relevamiento
             try:
                 ws_cliente.update_cell(4, 2,
                     f"Relevamiento: {datetime.now().strftime('%d/%m/%Y %H:%M')}")
@@ -460,28 +373,21 @@ def main():
                     continue
                 if fila[1].startswith("▶"):
                     continue
-                # col L (índice 11) = estado
                 if len(fila) > 11 and fila[11].strip() == "N/A":
                     continue
 
-                codigo       = fila[1].strip()
-                descripcion  = fila[2].strip() if len(fila) > 2 else ""
-                # col G (índice 6) = plazo días
-                plazo_str    = fila[6].strip() if len(fila) > 6 else ""
-                plazo_dias   = int(plazo_str) if plazo_str.isdigit() else None
-                # col H (índice 7) = fecha base
-                fecha_base   = fila[7].strip() if len(fila) > 7 else ""
-                # estado actual col L (índice 11)
-                estado_ant   = fila[11].strip() if len(fila) > 11 else ""
+                codigo      = fila[1].strip()
+                descripcion = fila[2].strip() if len(fila) > 2 else ""
+                plazo_str   = fila[6].strip() if len(fila) > 6 else ""
+                plazo_dias  = int(plazo_str) if plazo_str.isdigit() else None
+                fecha_base  = fila[7].strip() if len(fila) > 7 else ""
+                estado_ant  = fila[11].strip() if len(fila) > 11 else ""
 
-                match = next(
-                    (p for p in presentaciones
-                     if NOMBRE_A_CODIGO.get(p["nombre"]) == codigo),
-                    None
-                )
-                fecha_pres   = match["fecha"] if match else None
-                hora_pres    = match["hora"]  if match else ""
-                id_pres      = match["id"]    if match else ""
+                match      = next((p for p in presentaciones
+                                   if NOMBRE_A_CODIGO.get(p["nombre"]) == codigo), None)
+                fecha_pres = match["fecha"] if match else None
+                hora_pres  = match["hora"]  if match else ""
+                id_pres    = match["id"]    if match else ""
 
                 estado_nuevo = calcular_estado(
                     fecha_pres, fecha_base, plazo_dias, cierre_ejercicio)
@@ -492,34 +398,27 @@ def main():
                 else:                            conteo["vencidas"]  += 1
 
                 if estado_nuevo != estado_ant or (match and not fila[8].strip()):
-                    row_num = i + 9
                     actualizaciones.append({
-                        "row":         row_num,
-                        "fecha":       fecha_pres,
-                        "hora":        hora_pres,
-                        "id":          id_pres,
-                        "estado":      estado_nuevo,
-                        "codigo":      codigo,
-                        "descripcion": descripcion,
-                        "estado_ant":  estado_ant,
+                        "row":        i + 9,
+                        "fecha":      fecha_pres,
+                        "hora":       hora_pres,
+                        "id":         id_pres,
+                        "estado":     estado_nuevo,
+                        "codigo":     codigo,
+                        "descripcion":descripcion,
+                        "estado_ant": estado_ant,
                     })
 
-            # Escribir actualizaciones con pausa
             for upd in actualizaciones:
-                # I: fecha (col 9)
                 ws_cliente.update_cell(upd["row"], 9,
                     upd["fecha"].strftime("%d/%m/%Y") if upd["fecha"] else "")
                 time.sleep(1)
-                # J: hora (col 10)
                 ws_cliente.update_cell(upd["row"], 10, upd["hora"])
                 time.sleep(1)
-                # K: ID (col 11)
                 ws_cliente.update_cell(upd["row"], 11, upd["id"])
                 time.sleep(1)
-                # L: estado (col 12)
                 ws_cliente.update_cell(upd["row"], 12, upd["estado"])
                 time.sleep(1)
-
                 if upd["estado"] != upd["estado_ant"]:
                     escribir_log(sheet, nombre, upd["codigo"], upd["descripcion"],
                                  upd["estado_ant"], upd["estado"], upd["fecha"])
