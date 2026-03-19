@@ -246,8 +246,14 @@ def leer_clientes(sheet):
         if not any(fila):
             continue
         registro = dict(zip(encabezados, fila))
-        registro["_row"] = i   # guardamos el número de fila para poder limpiar col J
-        if str(registro.get("ACTIVO (S/N)", "")).upper() == "S":
+        # El cliente se incluye si EJECUTAR EN PRÓX. CRON = S
+        # O si tiene frecuencia configurada (siempre activo)
+        ejecutar = str(registro.get("EJECUTAR EN PRÓX. CRON", "")).strip().upper()
+        frecuencia = str(registro.get("FRECUENCIA RELEV.", "")).strip()
+        # Incluir cliente si tiene usuario AIF cargado
+        if registro.get("USUARIO AIF", "").strip():
+            registro["_row"] = i
+            registro["_forzar"] = (ejecutar == "SI")
             clientes.append(registro)
     return clientes
 
