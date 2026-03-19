@@ -162,8 +162,10 @@ def es_agrupador(fila):
     col_b = fila[1].strip() if len(fila) > 1 else ""
     if "▶" in col_a or "▶" in col_b:
         return True
-    if col_b and not (col_b.startswith("MUG_") or col_b.startswith("AGE_") or
-                      col_b.startswith("ECF_") or col_b.startswith("PLAyFT_")):
+    if not col_b:
+        return True
+    if not (col_b.startswith("MUG_") or col_b.startswith("AGE_") or
+            col_b.startswith("ECF_") or col_b.startswith("PLAyFT_")):
         return True
     return False
 
@@ -212,6 +214,7 @@ def aplicar_formato_pestana(sheet, ws):
     sheet_id = ws.id
     sid      = sheet.id
     requests = [
+        # Fila 2: encabezado cliente — azul oscuro
         {"repeatCell": {
             "range": {"sheetId": sheet_id, "startRowIndex": 1, "endRowIndex": 2,
                       "startColumnIndex": 0, "endColumnIndex": 14},
@@ -223,6 +226,7 @@ def aplicar_formato_pestana(sheet, ws):
             }},
             "fields": "userEnteredFormat(backgroundColor,textFormat,verticalAlignment)"
         }},
+        # Fila 4: relevamiento — gris
         {"repeatCell": {
             "range": {"sheetId": sheet_id, "startRowIndex": 3, "endRowIndex": 4,
                       "startColumnIndex": 0, "endColumnIndex": 14},
@@ -233,40 +237,7 @@ def aplicar_formato_pestana(sheet, ws):
             }},
             "fields": "userEnteredFormat(backgroundColor,textFormat)"
         }},
-        # Leyenda estados fila 6
-        {"repeatCell": {
-            "range": {"sheetId": sheet_id, "startRowIndex": 5, "endRowIndex": 6,
-                      "startColumnIndex": 2, "endColumnIndex": 3},
-            "cell": {"userEnteredFormat": {
-                "backgroundColor": color_rgb(198,239,206),
-                "textFormat": {"foregroundColor": color_rgb(39,98,33), "bold": True,
-                               "fontSize": 9, "fontFamily": "Arial"},
-                "horizontalAlignment": "CENTER",
-            }},
-            "fields": "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)"
-        }},
-        {"repeatCell": {
-            "range": {"sheetId": sheet_id, "startRowIndex": 5, "endRowIndex": 6,
-                      "startColumnIndex": 3, "endColumnIndex": 4},
-            "cell": {"userEnteredFormat": {
-                "backgroundColor": color_rgb(255,235,156),
-                "textFormat": {"foregroundColor": color_rgb(156,87,0), "bold": True,
-                               "fontSize": 9, "fontFamily": "Arial"},
-                "horizontalAlignment": "CENTER",
-            }},
-            "fields": "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)"
-        }},
-        {"repeatCell": {
-            "range": {"sheetId": sheet_id, "startRowIndex": 5, "endRowIndex": 6,
-                      "startColumnIndex": 4, "endColumnIndex": 6},
-            "cell": {"userEnteredFormat": {
-                "backgroundColor": color_rgb(255,199,206),
-                "textFormat": {"foregroundColor": color_rgb(156,0,6), "bold": True,
-                               "fontSize": 9, "fontFamily": "Arial"},
-                "horizontalAlignment": "CENTER",
-            }},
-            "fields": "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)"
-        }},
+        # Fila 8: encabezados — azul medio
         {"repeatCell": {
             "range": {"sheetId": sheet_id, "startRowIndex": 7, "endRowIndex": 8,
                       "startColumnIndex": 0, "endColumnIndex": 14},
@@ -280,7 +251,7 @@ def aplicar_formato_pestana(sheet, ws):
             }},
             "fields": "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment,wrapStrategy)"
         }},
-        # Formato condicional col L
+        # Formato condicional col L: CUMPLIDO
         {"addConditionalFormatRule": {"rule": {
             "ranges": [{"sheetId": sheet_id, "startRowIndex": 8,
                         "startColumnIndex": 11, "endColumnIndex": 12}],
@@ -290,6 +261,7 @@ def aplicar_formato_pestana(sheet, ws):
                            "textFormat": {"foregroundColor": color_rgb(39,98,33), "bold": True}}
             }
         }, "index": 0}},
+        # PRÓXIMO
         {"addConditionalFormatRule": {"rule": {
             "ranges": [{"sheetId": sheet_id, "startRowIndex": 8,
                         "startColumnIndex": 11, "endColumnIndex": 12}],
@@ -299,6 +271,7 @@ def aplicar_formato_pestana(sheet, ws):
                            "textFormat": {"foregroundColor": color_rgb(156,87,0), "bold": True}}
             }
         }, "index": 1}},
+        # VENCIDO
         {"addConditionalFormatRule": {"rule": {
             "ranges": [{"sheetId": sheet_id, "startRowIndex": 8,
                         "startColumnIndex": 11, "endColumnIndex": 12}],
@@ -308,6 +281,7 @@ def aplicar_formato_pestana(sheet, ws):
                            "textFormat": {"foregroundColor": color_rgb(156,0,6), "bold": True}}
             }
         }, "index": 2}},
+        # AUSENTE
         {"addConditionalFormatRule": {"rule": {
             "ranges": [{"sheetId": sheet_id, "startRowIndex": 8,
                         "startColumnIndex": 11, "endColumnIndex": 12}],
@@ -317,6 +291,7 @@ def aplicar_formato_pestana(sheet, ws):
                            "textFormat": {"foregroundColor": color_rgb(156,0,6), "bold": True}}
             }
         }, "index": 3}},
+        # Alturas
         {"updateDimensionProperties": {
             "range": {"sheetId": sheet_id, "dimension": "ROWS",
                       "startIndex": 1, "endIndex": 2},
@@ -342,19 +317,16 @@ def obtener_o_crear_pestana(sheet, nombre_pestana, plantilla_datos,
         ws = sheet.worksheet(nombre_pestana)
         all_vals = ws.get_all_values()
 
-        # Armar todas las actualizaciones en un solo batch
+        # Limpiar en una sola llamada batch
         batch = []
         for i, fila in enumerate(all_vals[8:], start=9):
             if es_agrupador(fila):
                 continue
             batch.append({"range": f"I{i}:L{i}",
                           "values": [["", "", "", "PENDIENTE"]]})
-
-        # Una sola llamada a la API para limpiar todo
         if batch:
             ws.batch_update(batch)
             time.sleep(2)
-
         return ws
 
     except gspread.WorksheetNotFound:
@@ -440,7 +412,6 @@ def scrape_cliente(page, usuario, password):
     while True:
         filas = page.query_selector_all("#grid-presentations tbody tr")
         print(f"  Filas en página actual: {len(filas)}")
-
         for fila in filas:
             celdas = fila.query_selector_all("td")
             if len(celdas) < 7:
@@ -460,12 +431,10 @@ def scrape_cliente(page, usuario, password):
                 "hora":   hora_str,
                 "id":     pres_id,
             })
-
         siguiente = page.query_selector("li.next:not(.disabled) a[data-page='next']")
         if not siguiente:
             break
         siguiente.click()
-        # Esperar activamente que la tabla recargue con datos reales
         for _ in range(15):
             page.wait_for_timeout(1000)
             n = len(page.query_selector_all("#grid-presentations tbody tr"))
@@ -540,6 +509,11 @@ def main():
             actualizaciones = []
 
             for i, fila in enumerate(obligaciones[8:]):
+                # DEBUG — mostrá qué ve el script en cada fila
+                col_b = fila[1].strip() if len(fila) > 1 else ""
+                col_l = fila[11].strip() if len(fila) > 11 else ""
+                print(f"  [DEBUG] fila {i+9}: col_b='{col_b}' col_l='{col_l}' agrupador={es_agrupador(fila)}")
+
                 if es_agrupador(fila):
                     continue
 
