@@ -340,22 +340,21 @@ def obtener_o_crear_pestana(sheet, nombre_pestana, plantilla_datos,
                              nombre_cliente, tipo):
     try:
         ws = sheet.worksheet(nombre_pestana)
-        # Limpieza en batch — una sola llamada por lote de filas
         all_vals = ws.get_all_values()
-        filas_a_limpiar = []
-        for i, fila in enumerate(all_vals[8:], start=9):
-            if not es_agrupador(fila):
-                filas_a_limpiar.append(i)
 
-        # Limpiar de a 20 filas con pausa entre lotes
-        for j in range(0, len(filas_a_limpiar), 20):
-            lote = filas_a_limpiar[j:j+20]
-            for row in lote:
-                ws.update_cell(row, 9,  "")
-                ws.update_cell(row, 10, "")
-                ws.update_cell(row, 11, "")
-                ws.update_cell(row, 12, "PENDIENTE")
-            time.sleep(5)   # pausa entre lotes para no exceder quota
+        # Armar todas las actualizaciones en un solo batch
+        batch = []
+        for i, fila in enumerate(all_vals[8:], start=9):
+            if es_agrupador(fila):
+                continue
+            batch.append({"range": f"I{i}:L{i}",
+                          "values": [["", "", "", "PENDIENTE"]]})
+
+        # Una sola llamada a la API para limpiar todo
+        if batch:
+            ws.batch_update(batch)
+            time.sleep(2)
+
         return ws
 
     except gspread.WorksheetNotFound:
