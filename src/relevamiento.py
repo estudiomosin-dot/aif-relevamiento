@@ -318,4 +318,293 @@ def aplicar_formato_pestana(sheet, ws):
             }
         }, "index": 3}},
         {"updateDimensionProperties": {
-            "range": {"sheetId": sheet_id, "dimensi
+            "range": {"sheetId": sheet_id, "dimension": "ROWS",
+                      "startIndex": 1, "endIndex": 2},
+            "properties": {"pixelSize": 32}, "fields": "pixelSize"
+        }},
+        {"updateDimensionProperties": {
+            "range": {"sheetId": sheet_id, "dimension": "ROWS",
+                      "startIndex": 7, "endIndex": 8},
+            "properties": {"pixelSize": 36}, "fields": "pixelSize"
+        }},
+    ]
+    sheet.client.request(
+        "post",
+        f"https://sheets.googleapis.com/v4/spreadsheets/{sid}:batchUpdate",
+        json={"requests": requests}
+    )
+    time.sleep(1)
+
+
+def obtener_o_crear_pestana(sheet, nombre_pestana, plantilla_datos,
+                             nombre_cliente, tipo):
+    try:
+        ws = sheet.worksheet(nombre_pestana)
+        # Limpieza en batch — una sola llamada por lote de filas
+        all_vals = ws.get_all_values()
+        filas_a_limpiar = []
+        for i, fila in enumerate(all_vals[8:], start=9):
+            if not es_agrupador(fila):
+                filas_a_limpiar.append(i)
+
+        # Limpiar de a 20 filas con pausa entre lotes
+        for j in range(0, len(filas_a_limpiar), 20):
+            lote = filas_a_limpiar[j:j+20]
+            for row in lote:
+                ws.update_cell(row, 9,  "")
+                ws.update_cell(row, 10, "")
+                ws.update_cell(row, 11, "")
+                ws.update_cell(row, 12, "PENDIENTE")
+            time.sleep(5)   # pausa entre lotes para no exceder quota
+        return ws
+
+    except gspread.WorksheetNotFound:
+        ws = sheet.add_worksheet(title=nombre_pestana, rows=250, cols=14)
+        time.sleep(1)
+        if plantilla_datos:
+            ws.update(range_name="A1", values=plantilla_datos)
+            time.sleep(2)
+        ws.update_cell(2, 2,
+            f"{nombre_cliente}  ({tipo})  |  Régimen Informativo AIF — CNV")
+        time.sleep(1)
+        try:
+            aplicar_formato_pestana(sheet, ws)
+        except Exception as e:
+            print(f"  [WARN] Formato no aplicado: {e}")
+        return ws
+
+
+def escribir_log(sheet, cliente, codigo, descripcion, estado_ant, estado_nuevo, fecha_pres):
+    ws = sheet.worksheet("LOG")
+    ws.append_row([
+        AHORA_AR.strftime("%d/%m/%Y %H:%M"),
+        cliente,
+        f"{codigo} — {descripcion}",
+        estado_ant,
+        estado_nuevo,
+        fecha_pres.strftime("%d/%m/%Y") if fecha_pres else "",
+        "",
+    ])
+    time.sleep(1)
+
+def actualizar_dashboard(sheet, cliente, total, cumplidas, proximas, vencidas):
+    ws    = sheet.worksheet("DASHBOARD")
+    datos = ws.get_all_values()
+    for i, fila in enumerate(datos):
+        if fila and fila[1].strip() == cliente:
+            row_num = i + 1
+            ws.update(
+                range_name=f"E{row_num}:I{row_num}",
+                values=[[
+                    cumplidas, proximas, vencidas,
+                    f"=E{row_num}/D{row_num}",
+                    AHORA_AR.strftime("%d/%m/%Y %H:%M"),
+                ]]
+            )
+            time.sleep(1)
+            return
+
+
+def scrape_cliente(page, usuario, password):
+    presentaciones = []
+    adfs_url = (
+        "https://cnvfs.cnv.gov.ar/adfs/ls/"
+        "?wtrealm=https://aif2.cnv.gov.ar"
+        "&wa=wsignin1.0"
+        "&wreply=https://aif2.cnv.gov.ar/"
+    )
+    page.goto(adfs_url)
+    page.wait_for_load_state("networkidle")
+    page.wait_for_selector("input[name='UserName']", timeout=15000)
+    page.fill("input[name='UserName']", usuario)
+    page.fill("input[name='Password']", password)
+    page.click("#submitButton")
+    page.wait_for_load_state("networkidle")
+
+    page.goto("https://aif2.cnv.gov.ar/Administered/History")
+    page.wait_for_load_state("networkidle")
+    page.wait_for_selector("#grid-presentations tbody tr", timeout=20000)
+    filas_iniciales = len(page.query_selector_all("#grid-presentations tbody tr"))
+
+    page.select_option("#date", "all")
+    for intento in range(60):
+        page.wait_for_timeout(1000)
+        n = len(page.query_selector_all("#grid-presentations tbody tr"))
+        if n > 1 and n != filas_iniciales:
+            print(f"  Tabla recargada en intento {intento+1}: {n} filas")
+            break
+        if intento % 5 == 0:
+            print(f"  Esperando recarga... intento {intento+1}, filas: {n}")
+    else:
+        print("  ADVERTENCIA: continuando con datos disponibles")
+
+    while True:
+        filas = page.query_selector_all("#grid-presentations tbody tr")
+        print(f"  Filas en página actual: {len(filas)}")
+
+        for fila in filas:
+            celdas = fila.query_selector_all("td")
+            if len(celdas) < 7:
+                continue
+            pres_id   = celdas[0].inner_text().strip()
+            fecha_str = celdas[1].inner_text().strip()
+            hora_str  = celdas[2].inner_text().strip()
+            span = celdas[3].query_selector("span[style*='font-weight']")
+            nombre_form = span.inner_text().strip() if span else celdas[3].inner_text().strip()
+            try:
+                fecha = datetime.strptime(fecha_str, "%d-%m-%Y").date()
+            except ValueError:
+                continue
+            presentaciones.append({
+                "nombre": nombre_form.upper(),
+                "fecha":  fecha,
+                "hora":   hora_str,
+                "id":     pres_id,
+            })
+
+        siguiente = page.query_selector("li.next:not(.disabled) a[data-page='next']")
+        if not siguiente:
+            break
+        siguiente.click()
+        # Esperar activamente que la tabla recargue con datos reales
+        for _ in range(15):
+            page.wait_for_timeout(1000)
+            n = len(page.query_selector_all("#grid-presentations tbody tr"))
+            if n > 1:
+                break
+
+    print(f"  Total presentaciones extraídas: {len(presentaciones)}")
+    try:
+        page.goto("https://aif2.cnv.gov.ar/Home/Logout")
+    except Exception:
+        pass
+    return presentaciones
+
+
+def main():
+    sheet         = conectar_sheet()
+    clientes      = leer_clientes(sheet)
+    clientes_json = json.loads(os.environ.get("CLIENTES_JSON", "{}"))
+
+    ws_alyc    = sheet.worksheet("ALyC - OBLIGACIONES")
+    ws_an      = sheet.worksheet("AN - OBLIGACIONES")
+    datos_alyc = ws_alyc.get_all_values()
+    datos_an   = ws_an.get_all_values()
+    time.sleep(2)
+
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(headless=True)
+
+        for cliente in clientes:
+            nombre           = cliente["NOMBRE CLIENTE"]
+            tipo             = cliente["TIPO (AN/ALyC)"]
+            creds            = clientes_json.get(nombre, {})
+            usuario          = creds.get("usuario", "")
+            password         = creds.get("password", "")
+            cierre_ejercicio = obtener_cierre_ejercicio(cliente)
+
+            if not usuario or not password:
+                print(f"[SKIP] {nombre}: sin credenciales")
+                continue
+
+            print(f"[START] {nombre} ({tipo})")
+            ctx  = browser.new_context(locale="es-AR")
+            page = ctx.new_page()
+
+            try:
+                presentaciones = scrape_cliente(page, usuario, password)
+            except Exception as e:
+                print(f"[ERROR] {nombre}: {e}")
+                ctx.close()
+                continue
+            finally:
+                ctx.close()
+
+            fecha_corta    = AHORA_AR.strftime("%d/%m")
+            nombre_pestana = f"{nombre} · {tipo} · {fecha_corta}"
+            plantilla      = datos_alyc if tipo == "ALyC" else datos_an
+            ws_cliente     = obtener_o_crear_pestana(
+                sheet, nombre_pestana, plantilla, nombre, tipo)
+            time.sleep(2)
+
+            try:
+                ws_cliente.update_cell(4, 2,
+                    f"Relevamiento: {AHORA_AR.strftime('%d/%m/%Y %H:%M')} (hora Argentina)")
+                time.sleep(1)
+            except Exception:
+                pass
+
+            obligaciones = ws_cliente.get_all_values()
+            time.sleep(1)
+
+            conteo = {"total": 0, "cumplidas": 0, "proximas": 0, "vencidas": 0}
+            actualizaciones = []
+
+            for i, fila in enumerate(obligaciones[8:]):
+                if es_agrupador(fila):
+                    continue
+
+                codigo      = fila[1].strip() if len(fila) > 1 else ""
+                if not codigo:
+                    continue
+
+                descripcion = fila[2].strip()  if len(fila) > 2  else ""
+                plazo_str   = fila[6].strip()  if len(fila) > 6  else ""
+                plazo_dias  = int(plazo_str)   if plazo_str.isdigit() else None
+                fecha_base  = fila[7].strip()  if len(fila) > 7  else ""
+                estado_ant  = fila[11].strip() if len(fila) > 11 else ""
+
+                if estado_ant == "N/A":
+                    continue
+
+                match      = next((p for p in presentaciones
+                                   if NOMBRE_A_CODIGO.get(p["nombre"]) == codigo), None)
+                fecha_pres = match["fecha"] if match else None
+                hora_pres  = match["hora"]  if match else ""
+                id_pres    = match["id"]    if match else ""
+
+                estado_nuevo = calcular_estado(
+                    fecha_pres, fecha_base, plazo_dias, cierre_ejercicio)
+
+                conteo["total"] += 1
+                if estado_nuevo == "CUMPLIDO":   conteo["cumplidas"] += 1
+                elif estado_nuevo == "PRÓXIMO":  conteo["proximas"]  += 1
+                else:                            conteo["vencidas"]  += 1
+
+                if estado_nuevo != estado_ant or (match and not fila[8].strip()):
+                    actualizaciones.append({
+                        "row":         i + 9,
+                        "fecha":       fecha_pres,
+                        "hora":        hora_pres,
+                        "id":          id_pres,
+                        "estado":      estado_nuevo,
+                        "codigo":      codigo,
+                        "descripcion": descripcion,
+                        "estado_ant":  estado_ant,
+                    })
+
+            for upd in actualizaciones:
+                ws_cliente.update_cell(upd["row"], 9,
+                    upd["fecha"].strftime("%d/%m/%Y") if upd["fecha"] else "")
+                time.sleep(1)
+                ws_cliente.update_cell(upd["row"], 10, upd["hora"])
+                time.sleep(1)
+                ws_cliente.update_cell(upd["row"], 11, upd["id"])
+                time.sleep(1)
+                ws_cliente.update_cell(upd["row"], 12, upd["estado"])
+                time.sleep(1)
+                if upd["estado"] != upd["estado_ant"]:
+                    escribir_log(sheet, nombre, upd["codigo"], upd["descripcion"],
+                                 upd["estado_ant"], upd["estado"], upd["fecha"])
+                    print(f"  [{upd['codigo']}] {upd['estado_ant']} → {upd['estado']}")
+
+            actualizar_dashboard(sheet, nombre, conteo["total"],
+                                 conteo["cumplidas"], conteo["proximas"],
+                                 conteo["vencidas"])
+            print(f"[DONE] {nombre}: {conteo}")
+
+        browser.close()
+
+
+if __name__ == "__main__":
+    main()
