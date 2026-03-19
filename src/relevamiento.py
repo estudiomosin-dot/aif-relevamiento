@@ -141,7 +141,6 @@ def calcular_vencimiento(fecha_base_str, plazo_dias, cierre_ejercicio=None):
 def calcular_estado(fecha_pres, fecha_base_str, plazo_dias, cierre_ejercicio=None):
     vencimiento = calcular_vencimiento(fecha_base_str, plazo_dias, cierre_ejercicio)
 
-    # Eventual puro
     if vencimiento is None and not plazo_dias:
         return "CUMPLIDO" if fecha_pres else "AUSENTE"
 
@@ -150,7 +149,6 @@ def calcular_estado(fecha_pres, fecha_base_str, plazo_dias, cierre_ejercicio=Non
         fb   = fecha_base_str.strip() if fecha_base_str else ""
 
         if fecha_pres:
-            # Determinar desde qué fecha la presentación es válida para el período actual
             if fb == "FIN_TRIMESTRE":
                 periodo_inicio = fin_trimestre_anterior()
             elif fb == "FIN_MES":
@@ -169,7 +167,6 @@ def calcular_estado(fecha_pres, fecha_base_str, plazo_dias, cierre_ejercicio=Non
                 periodo_inicio = None
 
             if periodo_inicio and fecha_pres > periodo_inicio:
-                # Presentación válida para el período actual
                 if dias < 0:           return "VENCIDO"
                 if dias <= PROX_DIAS:  return "PRÓXIMO"
                 return "CUMPLIDO"
@@ -178,17 +175,14 @@ def calcular_estado(fecha_pres, fecha_base_str, plazo_dias, cierre_ejercicio=Non
                 if dias <= PROX_DIAS:  return "PRÓXIMO"
                 return "CUMPLIDO"
             else:
-                # Presentación vieja — no cubre el período actual
                 if dias < 0:           return "VENCIDO"
                 if dias <= PROX_DIAS:  return "PRÓXIMO"
                 return "AUSENTE"
         else:
-            # Sin presentación
             if dias < 0:           return "VENCIDO"
             if dias <= PROX_DIAS:  return "PRÓXIMO"
             return "AUSENTE"
 
-    # Fallback con plazo sin fecha base reconocida
     if fecha_pres is None:
         return "AUSENTE"
     if plazo_dias:
@@ -200,15 +194,15 @@ def calcular_estado(fecha_pres, fecha_base_str, plazo_dias, cierre_ejercicio=Non
 
 def debe_correr_hoy(frecuencia_str):
     f = frecuencia_str.strip().upper() if frecuencia_str else "DIARIA"
-    if f in ("DIARIA", ""):           return True
-    if f == "LUNES":                  return HOY.weekday() == 0
-    if f == "MARTES":                 return HOY.weekday() == 1
-    if f in ("MIÉRCOLES","MIERCOLES"):return HOY.weekday() == 2
-    if f == "JUEVES":                 return HOY.weekday() == 3
-    if f == "VIERNES":                return HOY.weekday() == 4
-    if f == "SEMANAL":                return HOY.weekday() == 0
+    if f in ("DIARIA", ""):            return True
+    if f == "LUNES":                   return HOY.weekday() == 0
+    if f == "MARTES":                  return HOY.weekday() == 1
+    if f in ("MIÉRCOLES","MIERCOLES"): return HOY.weekday() == 2
+    if f == "JUEVES":                  return HOY.weekday() == 3
+    if f == "VIERNES":                 return HOY.weekday() == 4
+    if f == "SEMANAL":                 return HOY.weekday() == 0
     if f in ("MENSUAL","PRIMER DIA MES","PRIMERO MES"): return HOY.day == 1
-    if f == "DIA 15":                 return HOY.day == 15
+    if f == "DIA 15":                  return HOY.day == 15
     if f in ("ULTIMO DIA MES","ÚLTIMO DIA MES"):
         return (HOY + timedelta(days=1)).month != HOY.month
     return True
@@ -240,31 +234,21 @@ def leer_clientes(sheet):
     all_rows = ws.get_all_values()
     if len(all_rows) < 7:
         return []
-    encabezados = all_rows[5]
+    encabezados = all_rows[5]  # fila 6 = índice 5
+    print(f"[INFO] Encabezados encontrados: {encabezados}")
     clientes = []
     for i, fila in enumerate(all_rows[6:], start=7):
         if not any(fila):
             continue
         registro = dict(zip(encabezados, fila))
-        # El cliente se incluye si EJECUTAR EN PRÓX. CRON = S
-        # O si tiene frecuencia configurada (siempre activo)
         ejecutar = str(registro.get("EJECUTAR EN PRÓX. CRON", "")).strip().upper()
-        frecuencia = str(registro.get("FRECUENCIA RELEV.", "")).strip()
-        # Incluir cliente si tiene usuario AIF cargado
-        if registro.get("USUARIO AIF", "").strip():
+        usuario  = registro.get("USUARIO AIF", "").strip()
+        print(f"[INFO] Fila {i}: nombre='{registro.get('NOMBRE CLIENTE')}' ejecutar='{ejecutar}' usuario='{usuario}'")
+        if ejecutar == "S" and usuario:
             registro["_row"] = i
-            registro["_forzar"] = (ejecutar == "SI")
             clientes.append(registro)
+    print(f"[INFO] Total clientes a procesar: {len(clientes)}")
     return clientes
-
-def limpiar_ejecutar_ahora(sheet, row_num):
-    """Limpia la celda 'EJECUTAR EN PRÓX. CRON' (col J = col 10) del cliente."""
-    try:
-        ws = sheet.worksheet("CONFIGURACIÓN")
-        ws.update_cell(row_num, 10, "")
-        time.sleep(1)
-    except Exception as e:
-        print(f"  [WARN] No se pudo limpiar col J fila {row_num}: {e}")
 
 def obtener_cierre_ejercicio(cliente_registro):
     cierre_str = cliente_registro.get("FECHA CIERRE EJERCICIO", "").strip()
@@ -516,6 +500,10 @@ def main():
     sheet    = conectar_sheet()
     clientes = leer_clientes(sheet)
 
+    if not clientes:
+        print("[INFO] No hay clientes con EJECUTAR EN PRÓX. CRON = S. Finalizando.")
+        return
+
     # Cargar plantillas
     ws_alyc    = sheet.worksheet("ALyC - OBLIGACIONES")
     ws_an      = sheet.worksheet("AN - OBLIGACIONES")
@@ -536,20 +524,15 @@ def main():
             usuario    = cliente.get("USUARIO AIF", "").strip()
             password   = cliente.get("CLAVE AIF", "").strip()
             frecuencia = cliente.get("FRECUENCIA RELEV.", "DIARIA")
-            forzar     = cliente.get("EJECUTAR EN PRÓX. CRON", "").strip().upper() == "SI"
-            row_num    = cliente.get("_row")
             cierre_ejercicio = obtener_cierre_ejercicio(cliente)
 
-            if not usuario or not password:
-                print(f"[SKIP] {nombre}: sin credenciales")
+            if not password:
+                print(f"[SKIP] {nombre}: sin clave AIF")
                 continue
 
-            if not forzar and not debe_correr_hoy(frecuencia):
-                print(f"[SKIP] {nombre}: frecuencia '{frecuencia}' no corresponde hoy")
+            if not debe_correr_hoy(frecuencia):
+                print(f"[SKIP] {nombre}: frecuencia '{frecuencia}' no corresponde hoy ({HOY.strftime('%A')})")
                 continue
-
-            if forzar:
-                print(f"[FORZADO] {nombre}: ejecución manual solicitada desde el Sheet")
 
             if tipo == "ALyC":
                 plantilla = datos_alyc
@@ -576,10 +559,6 @@ def main():
                 continue
             finally:
                 ctx.close()
-
-            # Limpiar el flag EJECUTAR inmediatamente después del scraping
-            if forzar and row_num:
-                limpiar_ejecutar_ahora(sheet, row_num)
 
             fecha_corta    = AHORA_AR.strftime("%d/%m")
             nombre_pestana = f"{nombre} · {tipo} · {fecha_corta}"
