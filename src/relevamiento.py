@@ -12,7 +12,6 @@ HOY       = date.today()
 PROX_DIAS = 30
 
 NOMBRE_A_CODIGO = {
-    # MUG
     "HECHO RELEVANTE": "MUG_001",
     "HECHO RELEVANTE - MIGRACION": "MUG_001",
     "DATOS BASICOS DEL ADMINISTRADO": "MUG_002",
@@ -21,46 +20,54 @@ NOMBRE_A_CODIGO = {
     "ORGANIGRAMA - MIGRACION": "MUG_005",
     "COMPOSICION DEL CAPITAL Y TENENCIAS": "MUG_008",
     "ACTA DE ASAMBLEA Y/O REUNIÓN DE SOCIOS03": "MUG_021",
+    "ACTA DE ASAMBLEA Y/O REUNIÓN DE SOCIOS": "MUG_021",
     "ACTA DE ASAMBLEA - MIGRACION": "MUG_021",
     "ACTA DE ÓRGANO DE ADMINISTRACIÓN (DIRECTORIO)": "MUG_022",
     "ACTAS DEL ÓRGANO DE ADMINISTRACIÓN - MIGRACION": "MUG_022",
     "CONVOCATORIA A ASAMBLEA (ORDEN DEL DÍA) - MIGRACION": "MUG_025",
     "ESTATUTOS VIGENTES": "MUG_028",
+    "ESTATUTO VIGENTE": "MUG_028",
     "ESTATUTO VIGENTE ORDENADO - MIGRACION": "MUG_028",
-    # AGE
+    "NOMINA DE AUDITORES EXTERNOS": "MUG_011",
+    "NÓMINA DE AUDITORES EXTERNOS": "MUG_011",
+    "AUDITORES EXTERNOS - MIGRACION": "MUG_011",
+    "NÓMINA DE DIRECTORES": "MUG_013",
+    "NOMINA MIEMBROS ORGANO ADM.- FISCALIZACIÓN- GERENTES ART.270 - APODERADOS - MIGRACION": "MUG_013",
+    "NÓMINA DE FAMILIARES DE MIEMBROS DE ÓRGANOS DE ADMINISTRACIÓN Y FISCALIZACIÓN": "MUG_014",
+    "NÓMINA DE SÍNDICO O COMISION FISCALIZADORA": "MUG_016",
+    "NÓMINA DE SÍNDICOS O COMISIÓN FISCALIZADORA": "MUG_016",
     "MEMBRESIAS": "AGE_002",
+    "MEMBRESÍAS": "AGE_002",
     "MERCADO DONDE SON MIEMBROS - MIGRACION": "AGE_002",
     "DESIGNACIÓN DE RESPONSABLE DE CUMPLIMIENTO REGULATORIO Y CONTROL INTERNO": "AGE_003",
+    "DESIGNACIÓN RESPONSABLE DE CUMPLIMIENTO REGULATORIO Y CONTROL INTERNO": "AGE_003",
     "RESPONSABLE CUMPLIMENTO REGULATORIO - MIGRACION": "AGE_003",
     "RESPONSABLE RELACIONES CON EL PÚBLICO - MIGRACION": "AGE_004",
+    "DESIGNACIÓN RESPONSABLE DE RELACIONES CON EL PÚBLICO": "AGE_004",
     "VALORIZACIÓN DE CARTERAS ADMINISTRADAS.": "AGE_007",
     "ADELANTOS TRANSITORIOS OTORGADOS- INC. B) ART. 11, CAPÍTULO VII": "AGE_008",
     "PROCEDIMIENTO PARA SEGREGACIÓN DE ACTIVOS": "AGE_010",
+    "PROCEDIMIENTO SEGREGACIÓN DE ACTIVOS": "AGE_010",
     "PROCEDIMIENTO PARA SEPARACIÓN DE ACTIVOS-INFORMACIÓN DE CUENTAS - MIGRACION": "AGE_010",
     "INFORME AUDITORÍA ANUAL DE SISTEMAS": "AGE_012",
     "INFORME AUDITORÍA SISTEMAS (ANUAL) - MIGRACION": "AGE_012",
     "INFORME PERIÓDICO DE RESPONSABLE DE CUMPLIMIENTO REGULATORIO Y CONTROL INTERNO": "AGE_013",
     "INFORME CUMPLIMIENTO REGULATORIO - MIGRACION": "AGE_013",
     "INFORME RECLAMOS Y O DENUNCIAS": "AGE_014",
+    "TABLA ESTANDARIZADA DE COMISIONES PARA AGENTES": "AGE_015",
     "LISTADO DE COMISIONES - MIGRACION": "AGE_015",
     "CANTIDAD DE CLIENTES": "AGE_016",
     "APERTURA DE CUENTA": "AGE_017",
+    "NÓMINA DE AGENTES CON CONTRATO Y REFERENCIAMIENTO DE CLIENTES": "AGE_019",
     "NÓMINA DE AGENTES CON LOS QUE TENGA CONTRATO - MIGRACION": "AGE_019",
     "RÉGIMEN INFORMATIVO DE COMITENTES QUE OPEREN CON CDI Y CIE": "AGE_025",
+    "PUBLICIDAD Y/O DIFUSIÓN": "AGE_026",
     "CAPTACIÓN DE ÓRDENES Y MODALIDAD DE CONTACTO CON CLIENTES": "AGE_028",
     "MODALIDADES DE CONTACTO - MEDIOS DE CAPTACIÓN": "AGE_028",
     "MEDIOS DE CONTACTO CON CLIENTES - MIGRACION": "AGE_028",
     "CONTRAPARTIDA LÍQUIDA - ACTIVOS ELEGIBLES VIGENTES": "AGE_029",
     "CONTRAPARTIDA LÍQUIDA SEMANAL": "AGE_029",
     "PASIVOS FINANCIEROS": "AGE_030",
-    # Nóminas
-    "NOMINA DE AUDITORES EXTERNOS": "MUG_011",
-    "AUDITORES EXTERNOS - MIGRACION": "MUG_011",
-    "NÓMINA DE DIRECTORES": "MUG_013",
-    "NOMINA MIEMBROS ORGANO ADM.- FISCALIZACIÓN- GERENTES ART.270 - APODERADOS - MIGRACION": "MUG_013",
-    "NÓMINA DE FAMILIARES DE MIEMBROS DE ÓRGANOS DE ADMINISTRACIÓN Y FISCALIZACIÓN": "MUG_014",
-    "NÓMINA DE SÍNDICO O COMISION FISCALIZADORA": "MUG_016",
-    # ECF
     "ESTADOS CONTABLES - AGENTES": "ECF_010",
     "ESTADOS CONTABLES - COMERCIALES": "ECF_002",
     "ESTADOS CONTABLES - NIIF": "ECF_003",
@@ -105,6 +112,29 @@ def leer_clientes(sheet):
         if str(registro.get("ACTIVO (S/N)", "")).upper() == "S":
             clientes.append(registro)
     return clientes
+
+
+def obtener_o_crear_pestaña(sheet, nombre_pestaña, plantilla_datos):
+    """Obtiene la pestaña del cliente o la crea copiando la estructura de la plantilla."""
+    try:
+        ws = sheet.worksheet(nombre_pestaña)
+        # Limpiar columnas G y H desde fila 9 en adelante
+        all_values = ws.get_all_values()
+        for i, fila in enumerate(all_values[8:], start=9):
+            if fila and len(fila) > 1 and fila[1] and not fila[1].startswith("▶"):
+                ws.update_cell(i, 7, "")
+                ws.update_cell(i, 8, "")
+                time.sleep(0.5)
+        return ws
+    except gspread.WorksheetNotFound:
+        # Crear nueva pestaña copiando estructura de la plantilla
+        ws = sheet.add_worksheet(title=nombre_pestaña, rows=200, cols=10)
+        time.sleep(1)
+        # Copiar datos de la plantilla
+        if plantilla_datos:
+            ws.update(range_name="A1", values=plantilla_datos)
+            time.sleep(2)
+        return ws
 
 
 def escribir_log(sheet, cliente, codigo, descripcion, estado_ant, estado_nuevo, fecha_pres):
@@ -159,19 +189,15 @@ def scrape_cliente(page, usuario, password):
     page.click("#submitButton")
     page.wait_for_load_state("networkidle")
 
-    # Ir al historial
     page.goto("https://aif2.cnv.gov.ar/Administered/History")
     page.wait_for_load_state("networkidle")
 
-    # Esperar tabla inicial con filtro por defecto (6 meses)
     page.wait_for_selector("#grid-presentations tbody tr", timeout=20000)
     filas_iniciales = len(page.query_selector_all("#grid-presentations tbody tr"))
     print(f"  Filas iniciales (6 meses): {filas_iniciales}")
 
-    # Cambiar filtro a "Todos"
     page.select_option("#date", "all")
 
-    # Esperar que la tabla se recargue — el número de filas debe cambiar
     for intento in range(60):
         page.wait_for_timeout(1000)
         filas_ahora = page.query_selector_all("#grid-presentations tbody tr")
@@ -182,9 +208,8 @@ def scrape_cliente(page, usuario, password):
         if intento % 5 == 0:
             print(f"  Esperando recarga... intento {intento+1}, filas: {n}")
     else:
-        print("  ADVERTENCIA: tabla puede no haberse recargado, continuando igual")
+        print("  ADVERTENCIA: continuando con los datos disponibles")
 
-    # Recorrer todas las páginas
     while True:
         filas = page.query_selector_all("#grid-presentations tbody tr")
         print(f"  Filas en página actual: {len(filas)}")
@@ -221,12 +246,6 @@ def scrape_cliente(page, usuario, password):
     except Exception:
         pass
 
-    nombres_unicos = sorted(set(p["nombre"] for p in presentaciones))
-    print("=== NOMBRES EXTRAÍDOS DE LA AIF ===")
-    for n in nombres_unicos:
-        print(f"  '{n}'")
-    print("===================================")
-
     return presentaciones
 
 
@@ -235,6 +254,7 @@ def main():
     clientes      = leer_clientes(sheet)
     clientes_json = json.loads(os.environ.get("CLIENTES_JSON", "{}"))
 
+    # Leer plantillas base UNA SOLA VEZ
     ws_alyc    = sheet.worksheet("ALyC - OBLIGACIONES")
     ws_an      = sheet.worksheet("AN - OBLIGACIONES")
     datos_alyc = ws_alyc.get_all_values()
@@ -269,8 +289,24 @@ def main():
             finally:
                 ctx.close()
 
-            obligaciones = datos_alyc if tipo == "ALyC" else datos_an
-            ws_oblig     = ws_alyc if tipo == "ALyC" else ws_an
+            # Obtener o crear pestaña del cliente
+            nombre_pestaña = f"{nombre} · {tipo}"
+            plantilla      = datos_alyc if tipo == "ALyC" else datos_an
+            ws_cliente     = obtener_o_crear_pestaña(sheet, nombre_pestaña, plantilla)
+            time.sleep(2)
+
+            # Actualizar fecha de relevamiento en celda B4
+            try:
+                ws_cliente.update_cell(4, 2,
+                    f"Relevamiento: {datetime.now().strftime('%d/%m/%Y %H:%M')}")
+                time.sleep(1)
+            except Exception:
+                pass
+
+            # Leer datos de la pestaña del cliente
+            obligaciones = ws_cliente.get_all_values()
+            time.sleep(1)
+
             conteo = {"total": 0, "cumplidas": 0, "proximas": 0, "vencidas": 0}
             actualizaciones = []
 
@@ -316,10 +352,10 @@ def main():
                     })
 
             for upd in actualizaciones:
-                ws_oblig.update_cell(upd["row"], 7,
+                ws_cliente.update_cell(upd["row"], 7,
                     upd["fecha"].strftime("%d/%m/%Y") if upd["fecha"] else "")
                 time.sleep(1)
-                ws_oblig.update_cell(upd["row"], 8, upd["estado"])
+                ws_cliente.update_cell(upd["row"], 8, upd["estado"])
                 time.sleep(1)
                 escribir_log(sheet, nombre, upd["codigo"], upd["descripcion"],
                              upd["estado_ant"], upd["estado"], upd["fecha"])
