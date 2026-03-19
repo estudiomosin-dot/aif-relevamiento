@@ -235,7 +235,11 @@ def obtener_cierre_ejercicio(cliente_registro):
     return None
 
 
-def obtener_o_crear_pestana(sheet, nombre_pestana, plantilla_datos):
+def obtener_o_crear_pestana(sheet, nombre_pestana, tipo, nombre_cliente):
+    """
+    Crea la pestaña del cliente copiando la plantilla con formato completo.
+    Si ya existe, la limpia y actualiza.
+    """
     try:
         ws = sheet.worksheet(nombre_pestana)
         # Limpiar cols I, J, K, L desde fila 9
@@ -248,13 +252,36 @@ def obtener_o_crear_pestana(sheet, nombre_pestana, plantilla_datos):
                 ws.update_cell(i, 12, "PENDIENTE")
                 time.sleep(0.3)
         return ws
+
     except gspread.WorksheetNotFound:
-        ws = sheet.add_worksheet(title=nombre_pestana, rows=250, cols=14)
+        # Copiar plantilla con formato usando la API de Sheets
+        nombre_plantilla = "ALyC - OBLIGACIONES" if tipo == "ALyC" else "AN - OBLIGACIONES"
+        ws_plantilla = sheet.worksheet(nombre_plantilla)
+
+        # Duplicar la hoja plantilla via API
+        body = {
+            "destinationSpreadsheetId": sheet.id
+        }
+        sheet.client.request(
+            "post",
+            f"https://sheets.googleapis.com/v4/spreadsheets/{sheet.id}"
+            f"/sheets/{ws_plantilla.id}:copyTo",
+            json=body
+        )
+        time.sleep(2)
+
+        # La copia se llama "Copy of <nombre_plantilla>" — renombrarla
+        copia = sheet.worksheet(f"Copy of {nombre_plantilla}")
+        copia.update_title(nombre_pestana)
         time.sleep(1)
-        if plantilla_datos:
-            ws.update(range_name="A1", values=plantilla_datos)
-            time.sleep(2)
-        return ws
+
+        # Actualizar celda B2 con nombre del cliente
+        copia.update_cell(2, 2,
+            f"RÉGIMEN INFORMATIVO — {nombre_cliente} ({tipo})  |  "
+            f"Art. 11 Tít. XV + Tít. XI (PLAyFT) — Normas CNV (N.T. 2013 y mod.)")
+        time.sleep(1)
+
+        return copia
 
 
 def escribir_log(sheet, cliente, codigo, descripcion, estado_ant, estado_nuevo, fecha_pres):
@@ -411,7 +438,7 @@ def main():
             # Obtener o crear pestaña del cliente
             nombre_pestana = f"{nombre} · {tipo}"
             plantilla      = datos_alyc if tipo == "ALyC" else datos_an
-            ws_cliente     = obtener_o_crear_pestana(sheet, nombre_pestana, plantilla)
+            ws_cliente = obtener_o_crear_pestana(sheet, nombre_pestana, tipo, nombre)
             time.sleep(2)
 
             # Actualizar fecha de relevamiento
