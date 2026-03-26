@@ -234,7 +234,7 @@ def leer_clientes(sheet):
     all_rows = ws.get_all_values()
     if len(all_rows) < 7:
         return []
-    encabezados = all_rows[5]  # fila 6 = índice 5
+    encabezados = all_rows[5]
     print(f"[INFO] Encabezados encontrados: {encabezados}")
     clientes = []
     for i, fila in enumerate(all_rows[6:], start=7):
@@ -264,6 +264,34 @@ def obtener_cierre_ejercicio(cliente_registro):
         except ValueError:
             continue
     return None
+
+def escribir_cola_mails(sheet, nombre, tipo, nombre_pestana, mail_contacto):
+    """Escribe una fila en COLA_MAILS para que Make genere y envíe el PDF."""
+    if not mail_contacto:
+        print(f"  [COLA] {nombre}: sin mail de contacto, se omite")
+        return
+    try:
+        try:
+            ws_cola = sheet.worksheet("COLA_MAILS")
+        except gspread.WorksheetNotFound:
+            # Crear la pestaña si no existe
+            ws_cola = sheet.add_worksheet(title="COLA_MAILS", rows=100, cols=5)
+            ws_cola.update(range_name="A1:E1",
+                           values=[["NOMBRE", "TIPO", "PESTAÑA", "MAIL DESTINO", "FECHA"]])
+            time.sleep(1)
+            print(f"  [COLA] Pestaña COLA_MAILS creada automáticamente")
+
+        ws_cola.append_row([
+            nombre,
+            tipo,
+            nombre_pestana,
+            mail_contacto,
+            AHORA_AR.strftime("%d/%m/%Y %H:%M"),
+        ])
+        time.sleep(1)
+        print(f"  [COLA] {nombre} → {mail_contacto}")
+    except Exception as e:
+        print(f"  [WARN] No se pudo escribir en COLA_MAILS: {e}")
 
 
 def color_rgb(r, g, b):
@@ -519,11 +547,12 @@ def main():
         browser = pw.chromium.launch(headless=True)
 
         for cliente in clientes:
-            nombre     = cliente.get("NOMBRE CLIENTE", "").strip()
-            tipo       = cliente.get("TIPO (AN/ALyC)", "").strip()
-            usuario    = cliente.get("USUARIO AIF", "").strip()
-            password   = cliente.get("CLAVE AIF", "").strip()
-            frecuencia = cliente.get("FRECUENCIA RELEV.", "DIARIA")
+            nombre         = cliente.get("NOMBRE CLIENTE", "").strip()
+            tipo           = cliente.get("TIPO (AN/ALyC)", "").strip()
+            usuario        = cliente.get("USUARIO AIF", "").strip()
+            password       = cliente.get("CLAVE AIF", "").strip()
+            frecuencia     = cliente.get("FRECUENCIA RELEV.", "DIARIA")
+            mail_contacto  = cliente.get("MAIL CONTACTO", "").strip()
             cierre_ejercicio = obtener_cierre_ejercicio(cliente)
 
             if not password:
@@ -639,6 +668,10 @@ def main():
             actualizar_dashboard(sheet, nombre, conteo["total"],
                                  conteo["cumplidas"], conteo["proximas"],
                                  conteo["vencidas"])
+
+            # Escribir en COLA_MAILS para que Make genere y envíe el PDF
+            escribir_cola_mails(sheet, nombre, tipo, nombre_pestana, mail_contacto)
+
             print(f"[DONE] {nombre}: {conteo}")
 
         browser.close()
