@@ -296,39 +296,22 @@ def obtener_o_crear_carpeta(drive_service, nombre_carpeta, parent_id):
 def exportar_pdf_y_subir_drive(drive_service, sheet_id, gid,
                                 nombre_archivo, nombre_cliente, tipo):
     """
-    Exporta pestaña como PDF con formato optimizado y la sube
-    a la carpeta del cliente en tu Google Drive.
+    Exporta pestaña como PDF y la sube directamente a la carpeta
+    compartida en tu Google Drive usando multipart upload.
     """
-    # Parámetros de formato del PDF:
-    # portrait=false     → horizontal (landscape)
-    # fitw=true          → ajusta al ancho de la página
-    # gridlines=false    → sin líneas de grilla
-    # printtitle=false   → sin título de la hoja
-    # sheetnames=false   → sin nombre de pestaña
-    # fzr=false          → sin filas fijas repetidas
-    # size=A3            → papel A3 para más espacio horizontal
-    # range=B2:M         → exporta desde col B para evitar col A vacía
     export_url = (
         f"https://docs.google.com/spreadsheets/d/{sheet_id}/export"
-        f"?format=pdf"
-        f"&gid={gid}"
-        f"&portrait=false"
-        f"&fitw=true"
-        f"&gridlines=false"
-        f"&printtitle=false"
-        f"&sheetnames=false"
-        f"&fzr=false"
-        f"&size=A3"
-        f"&top_margin=0.5"
-        f"&bottom_margin=0.5"
-        f"&left_margin=0.5"
-        f"&right_margin=0.5"
+        f"?format=pdf&gid={gid}&portrait=false&fitw=true"
+        f"&gridlines=false&printtitle=false&sheetnames=false&fzr=false"
+        f"&size=A3&top_margin=0.5&bottom_margin=0.5"
+        f"&left_margin=0.5&right_margin=0.5"
     )
 
     creds_dict = json.loads(os.environ["GOOGLE_CREDENTIALS"])
     creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
     creds.refresh(Request())
 
+    # Descargar PDF
     response = requests.get(export_url,
                             headers={"Authorization": f"Bearer {creds.token}"})
     if response.status_code != 200:
@@ -338,28 +321,38 @@ def exportar_pdf_y_subir_drive(drive_service, sheet_id, gid,
     pdf_bytes = response.content
     print(f"  [PDF] Descargado: {len(pdf_bytes)} bytes")
 
-    # Carpeta del cliente dentro de tu Drive
+    # Obtener o crear carpeta del cliente
     carpeta_cliente = obtener_o_crear_carpeta(
         drive_service,
         f"{nombre_cliente} ({tipo})",
         parent_id=CARPETA_RAIZ_ID
     )
 
-    # Subir PDF a tu Drive (supportsAllDrives evita el error de quota)
-    file_metadata = {
+    # Subir usando requests directamente con el token — evita el storage del SA
+    upload_url = "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true"
+
+    metadata = json.dumps({
         "name": f"{nombre_archivo}.pdf",
         "mimeType": "application/pdf",
         "parents": [carpeta_cliente],
+    })
+
+    files_upload = {
+        "metadata": ("metadata", metadata, "application/json"),
+        "file":     ("file", pdf_bytes, "application/pdf"),
     }
-    media = MediaIoBaseUpload(
-        io.BytesIO(pdf_bytes), mimetype="application/pdf", resumable=False)
-    file = drive_service.files().create(
-        body=file_metadata,
-        media_body=media,
-        fields="id",
-        supportsAllDrives=True
-    ).execute()
-    file_id = file.get("id")
+
+    upload_response = requests.post(
+        upload_url,
+        headers={"Authorization": f"Bearer {creds.token}"},
+        files=files_upload
+    )
+
+    if upload_response.status_code not in (200, 201):
+        raise Exception(
+            f"Error subiendo PDF: {upload_response.status_code} — {upload_response.text[:300]}")
+
+    file_id = upload_response.json().get("id")
 
     # Permiso de lectura para Make
     drive_service.permissions().create(
@@ -371,7 +364,6 @@ def exportar_pdf_y_subir_drive(drive_service, sheet_id, gid,
     print(f"  [PDF] Subido: {nombre_cliente} ({tipo})/{nombre_archivo}.pdf")
     print(f"  [PDF] File ID: {file_id}")
     return file_id
-
 
 def obtener_gid_pestana(sheet, nombre_pestana):
     for ws in sheet.worksheets():
