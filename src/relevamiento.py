@@ -12,9 +12,9 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive",
 ]
 
-AHORA_AR  = datetime.utcnow() - timedelta(hours=3)
-HOY       = AHORA_AR.date()
-PROX_DIAS = 30
+AHORA_AR        = datetime.utcnow() - timedelta(hours=3)
+HOY             = AHORA_AR.date()
+PROX_DIAS       = 30
 CARPETA_RAIZ_ID = "1-v-i-5Ed4DZAeo5CIB_yK8G8ATtPIUJS"
 
 NOMBRE_A_CODIGO = {
@@ -127,12 +127,9 @@ def calcular_vencimiento(fecha_base_str, plazo_dias, cierre_ejercicio=None):
         return base + timedelta(days=plazo_dias) if plazo_dias else None
     if fb == "FIN_SEMANA":
         return miercoles_esta_semana()
-    if fb == "10/01":
-        return date(HOY.year, 1, 10)
-    if fb == "30/04":
-        return date(HOY.year, 4, 30)
-    if fb == "28/08":
-        return date(HOY.year, 8, 28)
+    if fb == "10/01":  return date(HOY.year, 1, 10)
+    if fb == "30/04":  return date(HOY.year, 4, 30)
+    if fb == "28/08":  return date(HOY.year, 8, 28)
     if fb == "31/12":
         base = date(HOY.year - 1, 12, 31)
         return base + timedelta(days=plazo_dias) if plazo_dias else None
@@ -151,24 +148,19 @@ def calcular_estado(fecha_pres, fecha_base_str, plazo_dias, cierre_ejercicio=Non
     if vencimiento:
         dias = (vencimiento - HOY).days
         fb   = fecha_base_str.strip() if fecha_base_str else ""
-
         if fecha_pres:
-            if fb == "FIN_TRIMESTRE":
-                periodo_inicio = fin_trimestre_anterior()
-            elif fb == "FIN_MES":
-                periodo_inicio = fin_mes_anterior()
+            if fb == "FIN_TRIMESTRE":       periodo_inicio = fin_trimestre_anterior()
+            elif fb == "FIN_MES":           periodo_inicio = fin_mes_anterior()
             elif fb == "FIN_SEMANA":
                 monday = HOY - timedelta(days=HOY.weekday())
                 periodo_inicio = monday - timedelta(days=7)
-            elif fb in ("10/01", "30/04", "28/08"):
+            elif fb in ("10/01","30/04","28/08"):
                 periodo_inicio = date(HOY.year - 1, 12, 31)
-            elif fb == "31/12":
-                periodo_inicio = date(HOY.year - 2, 12, 31)
+            elif fb == "31/12":             periodo_inicio = date(HOY.year - 2, 12, 31)
             elif fb == "CIERRE_EJERCICIO":
                 periodo_inicio = (cierre_ejercicio - timedelta(days=365)
                                   if cierre_ejercicio else None)
-            else:
-                periodo_inicio = None
+            else:                           periodo_inicio = None
 
             if periodo_inicio and fecha_pres > periodo_inicio:
                 if dias < 0:           return "VENCIDO"
@@ -187,8 +179,7 @@ def calcular_estado(fecha_pres, fecha_base_str, plazo_dias, cierre_ejercicio=Non
             if dias <= PROX_DIAS:  return "PRÓXIMO"
             return "AUSENTE"
 
-    if fecha_pres is None:
-        return "AUSENTE"
+    if fecha_pres is None: return "AUSENTE"
     if plazo_dias:
         dias = (fecha_pres + timedelta(days=plazo_dias) - HOY).days
         if dias < 0:           return "VENCIDO"
@@ -213,14 +204,11 @@ def debe_correr_hoy(frecuencia_str):
 
 
 def es_agrupador(fila):
-    if not any(fila):
-        return True
+    if not any(fila): return True
     col_a = fila[0].strip() if len(fila) > 0 else ""
     col_b = fila[1].strip() if len(fila) > 1 else ""
-    if "▶" in col_a or "▶" in col_b:
-        return True
-    if not col_b:
-        return True
+    if "▶" in col_a or "▶" in col_b: return True
+    if not col_b: return True
     if not (col_b.startswith("MUG_") or col_b.startswith("AGE_") or
             col_b.startswith("ECF_") or col_b.startswith("PLAyFT_")):
         return True
@@ -247,8 +235,7 @@ def leer_clientes(sheet):
     print(f"[INFO] Encabezados: {encabezados}")
     clientes = []
     for i, fila in enumerate(all_rows[6:], start=7):
-        if not any(fila):
-            continue
+        if not any(fila): continue
         registro = dict(zip(encabezados, fila))
         ejecutar = str(
             registro.get("EJECUTAR EN PRÓX. CRON", "") or
@@ -265,8 +252,7 @@ def leer_clientes(sheet):
 
 def obtener_cierre_ejercicio(cliente_registro):
     cierre_str = cliente_registro.get("FECHA CIERRE EJERCICIO", "").strip()
-    if not cierre_str:
-        return None
+    if not cierre_str: return None
     for fmt in ("%d/%m/%Y", "%d/%m"):
         try:
             d = datetime.strptime(cierre_str, fmt)
@@ -280,12 +266,16 @@ def obtener_cierre_ejercicio(cliente_registro):
 
 
 def obtener_o_crear_carpeta(drive_service, nombre_carpeta, parent_id):
-    """Busca una subcarpeta por nombre dentro de parent_id. Si no existe, la crea."""
+    """Busca subcarpeta en parent_id. Si no existe, la crea."""
     query = (f"name='{nombre_carpeta}' and "
              f"mimeType='application/vnd.google-apps.folder' and "
              f"trashed=false and '{parent_id}' in parents")
     results = drive_service.files().list(
-        q=query, fields="files(id, name)").execute()
+        q=query,
+        fields="files(id, name)",
+        supportsAllDrives=True,
+        includeItemsFromAllDrives=True
+    ).execute()
     files = results.get("files", [])
     if files:
         return files[0]["id"]
@@ -295,19 +285,46 @@ def obtener_o_crear_carpeta(drive_service, nombre_carpeta, parent_id):
         "parents": [parent_id],
     }
     folder = drive_service.files().create(
-        body=metadata, fields="id").execute()
+        body=metadata,
+        fields="id",
+        supportsAllDrives=True
+    ).execute()
     print(f"  [DRIVE] Subcarpeta creada: {nombre_carpeta}")
     return folder.get("id")
 
 
 def exportar_pdf_y_subir_drive(drive_service, sheet_id, gid,
                                 nombre_archivo, nombre_cliente, tipo):
-    """Exporta pestaña como PDF y la sube a Drive en carpeta del cliente."""
+    """
+    Exporta pestaña como PDF con formato optimizado y la sube
+    a la carpeta del cliente en tu Google Drive.
+    """
+    # Parámetros de formato del PDF:
+    # portrait=false     → horizontal (landscape)
+    # fitw=true          → ajusta al ancho de la página
+    # gridlines=false    → sin líneas de grilla
+    # printtitle=false   → sin título de la hoja
+    # sheetnames=false   → sin nombre de pestaña
+    # fzr=false          → sin filas fijas repetidas
+    # size=A3            → papel A3 para más espacio horizontal
+    # range=B2:M         → exporta desde col B para evitar col A vacía
     export_url = (
         f"https://docs.google.com/spreadsheets/d/{sheet_id}/export"
-        f"?format=pdf&gid={gid}&portrait=false&fitw=true"
-        f"&gridlines=false&printtitle=false&sheetnames=false&fzr=false"
+        f"?format=pdf"
+        f"&gid={gid}"
+        f"&portrait=false"
+        f"&fitw=true"
+        f"&gridlines=false"
+        f"&printtitle=false"
+        f"&sheetnames=false"
+        f"&fzr=false"
+        f"&size=A3"
+        f"&top_margin=0.5"
+        f"&bottom_margin=0.5"
+        f"&left_margin=0.5"
+        f"&right_margin=0.5"
     )
+
     creds_dict = json.loads(os.environ["GOOGLE_CREDENTIALS"])
     creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
     creds.refresh(Request())
@@ -316,17 +333,19 @@ def exportar_pdf_y_subir_drive(drive_service, sheet_id, gid,
                             headers={"Authorization": f"Bearer {creds.token}"})
     if response.status_code != 200:
         raise Exception(
-            f"Error exportando PDF: {response.status_code} — {response.text[:200]}")
+            f"Error exportando PDF: {response.status_code} — {response.text[:300]}")
 
     pdf_bytes = response.content
     print(f"  [PDF] Descargado: {len(pdf_bytes)} bytes")
 
+    # Carpeta del cliente dentro de tu Drive
     carpeta_cliente = obtener_o_crear_carpeta(
         drive_service,
         f"{nombre_cliente} ({tipo})",
         parent_id=CARPETA_RAIZ_ID
     )
 
+    # Subir PDF a tu Drive (supportsAllDrives evita el error de quota)
     file_metadata = {
         "name": f"{nombre_archivo}.pdf",
         "mimeType": "application/pdf",
@@ -335,21 +354,26 @@ def exportar_pdf_y_subir_drive(drive_service, sheet_id, gid,
     media = MediaIoBaseUpload(
         io.BytesIO(pdf_bytes), mimetype="application/pdf", resumable=False)
     file = drive_service.files().create(
-        body=file_metadata, media_body=media, fields="id").execute()
+        body=file_metadata,
+        media_body=media,
+        fields="id",
+        supportsAllDrives=True
+    ).execute()
     file_id = file.get("id")
 
+    # Permiso de lectura para Make
     drive_service.permissions().create(
         fileId=file_id,
         body={"type": "anyone", "role": "reader"},
+        supportsAllDrives=True
     ).execute()
 
-    print(f"  [PDF] Subido en carpeta: {nombre_cliente} ({tipo})")
+    print(f"  [PDF] Subido: {nombre_cliente} ({tipo})/{nombre_archivo}.pdf")
     print(f"  [PDF] File ID: {file_id}")
     return file_id
 
 
 def obtener_gid_pestana(sheet, nombre_pestana):
-    """Obtiene el sheetId (gid) de una pestaña por nombre exacto."""
     for ws in sheet.worksheets():
         if ws.title == nombre_pestana:
             return ws.id
@@ -586,8 +610,7 @@ def scrape_cliente(page, usuario, password):
         print(f"  Filas en página actual: {len(filas)}")
         for fila in filas:
             celdas = fila.query_selector_all("td")
-            if len(celdas) < 7:
-                continue
+            if len(celdas) < 7: continue
             pres_id   = celdas[0].inner_text().strip()
             fecha_str = celdas[1].inner_text().strip()
             hora_str  = celdas[2].inner_text().strip()
@@ -606,14 +629,12 @@ def scrape_cliente(page, usuario, password):
             })
         siguiente = page.query_selector(
             "li.next:not(.disabled) a[data-page='next']")
-        if not siguiente:
-            break
+        if not siguiente: break
         siguiente.click()
         for _ in range(15):
             page.wait_for_timeout(1000)
             n = len(page.query_selector_all("#grid-presentations tbody tr"))
-            if n > 1:
-                break
+            if n > 1: break
 
     print(f"  Total presentaciones extraídas: {len(presentaciones)}")
     try:
@@ -670,10 +691,8 @@ def main():
                 print(f"[SKIP] {nombre}: frecuencia '{frecuencia}' no corresponde hoy")
                 continue
 
-            if tipo == "ALyC":
-                plantilla = datos_alyc
-            elif tipo == "AN":
-                plantilla = datos_an
+            if tipo == "ALyC":       plantilla = datos_alyc
+            elif tipo == "AN":       plantilla = datos_an
             elif tipo == "AAGI":
                 if datos_aagi is None:
                     print(f"[SKIP] {nombre}: no existe pestaña 'AAGI - OBLIGACIONES'")
@@ -716,11 +735,9 @@ def main():
             actualizaciones = []
 
             for i, fila in enumerate(obligaciones[8:]):
-                if es_agrupador(fila):
-                    continue
+                if es_agrupador(fila): continue
                 codigo = fila[1].strip() if len(fila) > 1 else ""
-                if not codigo:
-                    continue
+                if not codigo: continue
 
                 descripcion = fila[2].strip()  if len(fila) > 2  else ""
                 plazo_str   = fila[6].strip()  if len(fila) > 6  else ""
@@ -728,12 +745,10 @@ def main():
                 fecha_base  = fila[7].strip()  if len(fila) > 7  else ""
                 estado_ant  = fila[11].strip() if len(fila) > 11 else ""
 
-                if estado_ant == "N/A":
-                    continue
+                if estado_ant == "N/A": continue
 
                 match      = next((p for p in presentaciones
-                                   if NOMBRE_A_CODIGO.get(p["nombre"]) == codigo),
-                                  None)
+                                   if NOMBRE_A_CODIGO.get(p["nombre"]) == codigo), None)
                 fecha_pres = match["fecha"] if match else None
                 hora_pres  = match["hora"]  if match else ""
                 id_pres    = match["id"]    if match else ""
@@ -782,8 +797,9 @@ def main():
             if mail_contacto:
                 try:
                     print(f"  [PDF] Buscando pestaña: '{nombre_pestana}'")
+                    todas = [ws.title for ws in sheet.worksheets()]
                     gid = obtener_gid_pestana(sheet, nombre_pestana)
-                    print(f"  [PDF] GID encontrado: {gid}")
+                    print(f"  [PDF] GID: {gid}")
                     if gid is not None:
                         nombre_pdf = (f"Relevamiento AIF — {nombre} ({tipo}) "
                                       f"{AHORA_AR.strftime('%d-%m-%Y')}")
@@ -794,9 +810,11 @@ def main():
                                             nombre_pestana, mail_contacto,
                                             file_id)
                     else:
-                        print(f"  [WARN] Pestaña '{nombre_pestana}' no encontrada")
+                        print(f"  [WARN] Pestaña no encontrada. Disponibles: {todas}")
                 except Exception as e:
-                    print(f"  [WARN] Error generando PDF: {e}")
+                    import traceback
+                    print(f"  [WARN] Error PDF: {e}")
+                    print(traceback.format_exc())
             else:
                 print(f"  [INFO] {nombre}: sin mail, no se genera PDF")
 
