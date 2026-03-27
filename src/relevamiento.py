@@ -293,7 +293,7 @@ def obtener_o_crear_carpeta(drive_service, nombre_carpeta, parent_id):
         body=metadata, fields="id").execute()
     print(f"  [DRIVE] Subcarpeta creada: {nombre_carpeta}")
     return folder.get("id")
-```
+
 
 
 
