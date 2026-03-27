@@ -274,12 +274,11 @@ def obtener_cierre_ejercicio(cliente_registro):
     return None
 
 
-def obtener_o_crear_carpeta(drive_service, nombre_carpeta, parent_id=None):
-    """Busca una carpeta en Drive. Si no existe, la crea."""
+def obtener_o_crear_carpeta(drive_service, nombre_carpeta, parent_id):
+    """Busca una subcarpeta por nombre. Si no existe, la crea."""
     query = (f"name='{nombre_carpeta}' and "
-             f"mimeType='application/vnd.google-apps.folder' and trashed=false")
-    if parent_id:
-        query += f" and '{parent_id}' in parents"
+             f"mimeType='application/vnd.google-apps.folder' and "
+             f"trashed=false and '{parent_id}' in parents")
     results = drive_service.files().list(
         q=query, fields="files(id, name)").execute()
     files = results.get("files", [])
@@ -288,13 +287,14 @@ def obtener_o_crear_carpeta(drive_service, nombre_carpeta, parent_id=None):
     metadata = {
         "name": nombre_carpeta,
         "mimeType": "application/vnd.google-apps.folder",
+        "parents": [parent_id],
     }
-    if parent_id:
-        metadata["parents"] = [parent_id]
     folder = drive_service.files().create(
         body=metadata, fields="id").execute()
-    print(f"  [DRIVE] Carpeta creada: {nombre_carpeta}")
+    print(f"  [DRIVE] Subcarpeta creada: {nombre_carpeta}")
     return folder.get("id")
+```
+
 
 
 def exportar_pdf_y_subir_drive(drive_service, sheet_id, gid,
@@ -318,9 +318,10 @@ def exportar_pdf_y_subir_drive(drive_service, sheet_id, gid,
     pdf_bytes = response.content
     print(f"  [PDF] Descargado: {len(pdf_bytes)} bytes")
 
-    carpeta_raiz    = obtener_o_crear_carpeta(drive_service, "AIF Relevamientos")
+    # Carpeta raíz fija en tu Google Drive personal
+    CARPETA_RAIZ_ID = "1-v-i-5Ed4DZAeo5CIB_yK8G8ATtPIUJS"
     carpeta_cliente = obtener_o_crear_carpeta(
-        drive_service, f"{nombre_cliente} ({tipo})", parent_id=carpeta_raiz)
+    drive_service, f"{nombre_cliente} ({tipo})", parent_id=CARPETA_RAIZ_ID)
 
     file_metadata = {
         "name": f"{nombre_archivo}.pdf",
