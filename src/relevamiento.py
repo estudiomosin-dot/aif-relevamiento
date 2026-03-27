@@ -15,6 +15,7 @@ SCOPES = [
 AHORA_AR  = datetime.utcnow() - timedelta(hours=3)
 HOY       = AHORA_AR.date()
 PROX_DIAS = 30
+CARPETA_RAIZ_ID = "1-v-i-5Ed4DZAeo5CIB_yK8G8ATtPIUJS"
 
 NOMBRE_A_CODIGO = {
     "HECHO RELEVANTE": "MUG_001",
@@ -249,9 +250,13 @@ def leer_clientes(sheet):
         if not any(fila):
             continue
         registro = dict(zip(encabezados, fila))
-        ejecutar = str(registro.get("EJECUTAR EN PRÓX. CRON", "")).strip().upper()
-        usuario  = registro.get("USUARIO AIF", "").strip()
-        print(f"[INFO] Fila {i}: nombre='{registro.get('NOMBRE CLIENTE')}' ejecutar='{ejecutar}' usuario='{usuario}'")
+        ejecutar = str(
+            registro.get("EJECUTAR EN PRÓX. CRON", "") or
+            registro.get("EJECUTAR EN PROX. CRON", "")
+        ).strip().upper()
+        usuario = registro.get("USUARIO AIF", "").strip()
+        print(f"[INFO] Fila {i}: nombre='{registro.get('NOMBRE CLIENTE')}' "
+              f"ejecutar='{ejecutar}' usuario='{usuario}'")
         if ejecutar == "S" and usuario:
             registro["_row"] = i
             clientes.append(registro)
@@ -275,7 +280,7 @@ def obtener_cierre_ejercicio(cliente_registro):
 
 
 def obtener_o_crear_carpeta(drive_service, nombre_carpeta, parent_id):
-    """Busca una subcarpeta por nombre. Si no existe, la crea."""
+    """Busca una subcarpeta por nombre dentro de parent_id. Si no existe, la crea."""
     query = (f"name='{nombre_carpeta}' and "
              f"mimeType='application/vnd.google-apps.folder' and "
              f"trashed=false and '{parent_id}' in parents")
@@ -295,11 +300,9 @@ def obtener_o_crear_carpeta(drive_service, nombre_carpeta, parent_id):
     return folder.get("id")
 
 
-
-
 def exportar_pdf_y_subir_drive(drive_service, sheet_id, gid,
                                 nombre_archivo, nombre_cliente, tipo):
-    """Exporta una pestaña como PDF y la sube a Drive en la carpeta del cliente."""
+    """Exporta pestaña como PDF y la sube a Drive en carpeta del cliente."""
     export_url = (
         f"https://docs.google.com/spreadsheets/d/{sheet_id}/export"
         f"?format=pdf&gid={gid}&portrait=false&fitw=true"
@@ -318,10 +321,11 @@ def exportar_pdf_y_subir_drive(drive_service, sheet_id, gid,
     pdf_bytes = response.content
     print(f"  [PDF] Descargado: {len(pdf_bytes)} bytes")
 
-    # Carpeta raíz fija en tu Google Drive personal
-    CARPETA_RAIZ_ID = "1-v-i-5Ed4DZAeo5CIB_yK8G8ATtPIUJS"
     carpeta_cliente = obtener_o_crear_carpeta(
-    drive_service, f"{nombre_cliente} ({tipo})", parent_id=CARPETA_RAIZ_ID)
+        drive_service,
+        f"{nombre_cliente} ({tipo})",
+        parent_id=CARPETA_RAIZ_ID
+    )
 
     file_metadata = {
         "name": f"{nombre_archivo}.pdf",
@@ -339,12 +343,13 @@ def exportar_pdf_y_subir_drive(drive_service, sheet_id, gid,
         body={"type": "anyone", "role": "reader"},
     ).execute()
 
-    print(f"  [PDF] Subido: AIF Relevamientos/{nombre_cliente} ({tipo})/")
+    print(f"  [PDF] Subido en carpeta: {nombre_cliente} ({tipo})")
     print(f"  [PDF] File ID: {file_id}")
     return file_id
 
 
 def obtener_gid_pestana(sheet, nombre_pestana):
+    """Obtiene el sheetId (gid) de una pestaña por nombre exacto."""
     for ws in sheet.worksheets():
         if ws.title == nombre_pestana:
             return ws.id
@@ -354,7 +359,7 @@ def obtener_gid_pestana(sheet, nombre_pestana):
 def escribir_cola_mails(sheet, nombre, tipo, nombre_pestana,
                         mail_contacto, file_id):
     if not mail_contacto:
-        print(f"  [COLA] {nombre}: sin mail de contacto, se omite")
+        print(f"  [COLA] {nombre}: sin mail, se omite")
         return
     try:
         try:
@@ -365,7 +370,7 @@ def escribir_cola_mails(sheet, nombre, tipo, nombre_pestana,
                            values=[["NOMBRE", "TIPO", "PESTAÑA",
                                     "MAIL DESTINO", "FECHA", "FILE ID"]])
             time.sleep(1)
-            print("  [COLA] Pestaña COLA_MAILS creada automáticamente")
+            print("  [COLA] Pestaña COLA_MAILS creada")
         ws_cola.append_row([
             nombre, tipo, nombre_pestana,
             mail_contacto,
@@ -776,7 +781,9 @@ def main():
             # Exportar PDF, subir a Drive y escribir en cola
             if mail_contacto:
                 try:
+                    print(f"  [PDF] Buscando pestaña: '{nombre_pestana}'")
                     gid = obtener_gid_pestana(sheet, nombre_pestana)
+                    print(f"  [PDF] GID encontrado: {gid}")
                     if gid is not None:
                         nombre_pdf = (f"Relevamiento AIF — {nombre} ({tipo}) "
                                       f"{AHORA_AR.strftime('%d-%m-%Y')}")
@@ -787,7 +794,7 @@ def main():
                                             nombre_pestana, mail_contacto,
                                             file_id)
                     else:
-                        print(f"  [WARN] No se encontró gid para '{nombre_pestana}'")
+                        print(f"  [WARN] Pestaña '{nombre_pestana}' no encontrada")
                 except Exception as e:
                     print(f"  [WARN] Error generando PDF: {e}")
             else:
