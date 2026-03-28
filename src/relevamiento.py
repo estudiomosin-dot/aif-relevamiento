@@ -260,75 +260,57 @@ def obtener_cierre_ejercicio(cliente_registro):
     return None
 
 
-def llamar_apps_script(nombre_pestana, nombre_cliente, tipo, nombre_pdf):
+def llamar_apps_script(nombre_pestana, nombre_cliente, tipo,
+                        nombre_pdf, mail_destino):
     """
-    Llama al Apps Script para que genere el PDF y lo guarde en Drive.
-    Retorna el file_id del PDF o None si falla.
+    Llama al Apps Script para generar el PDF, guardarlo en Drive
+    y enviar el mail. Retorna file_id o None.
     """
     apps_script_url = os.environ.get("APPS_SCRIPT_URL", "")
     if not apps_script_url:
-        print("  [WARN] APPS_SCRIPT_URL no configurado")
+        print("  [WARN] APPS_SCRIPT_URL no configurado en secrets")
         return None
 
     payload = {
-        "nombre_pestana":  nombre_pestana,
-        "nombre_cliente":  nombre_cliente,
-        "tipo":            tipo,
-        "nombre_pdf":      nombre_pdf,
+        "nombre_pestana": nombre_pestana,
+        "nombre_cliente": nombre_cliente,
+        "tipo":           tipo,
+        "nombre_pdf":     nombre_pdf,
+        "mail_destino":   mail_destino,
     }
 
-    try:
-        response = requests.post(
-            apps_script_url,
-            json=payload,
-            timeout=60,
-            # Apps Script Web App con acceso "Anyone" no requiere token
-        )
-        print(f"  [APPS SCRIPT] Status: {response.status_code}")
-        print(f"  [APPS SCRIPT] Response: {response.text[:200]}")
-
-        if response.status_code == 200:
-            data = response.json()
-            if data.get("status") == "ok":
-                return data.get("file_id")
-            else:
-                print(f"  [WARN] Apps Script error: {data.get('message')}")
-                return None
-        else:
-            print(f"  [WARN] HTTP error: {response.status_code}")
-            return None
-    except Exception as e:
-        print(f"  [WARN] Error llamando Apps Script: {e}")
-        return None
-
-
-def escribir_cola_mails(sheet, nombre, tipo, nombre_pestana,
-                        mail_contacto, file_id, nombre_pdf):
-    if not mail_contacto:
-        print(f"  [COLA] {nombre}: sin mail, se omite")
-        return
-    try:
+    for intento in range(3):
         try:
-            ws_cola = sheet.worksheet("COLA_MAILS")
-        except gspread.WorksheetNotFound:
-            ws_cola = sheet.add_worksheet(title="COLA_MAILS", rows=100, cols=6)
-            ws_cola.update(range_name="A1:F1",
-                           values=[["NOMBRE", "TIPO",
-                                    "MAIL DESTINO", "FECHA",
-                                    "FILE ID", "NOMBRE PDF"]])
-            time.sleep(1)
-            print("  [COLA] Pestaña COLA_MAILS creada")
-        ws_cola.append_row([
-            nombre, tipo,
-            mail_contacto,
-            AHORA_AR.strftime("%d/%m/%Y %H:%M"),
-            file_id,
-            nombre_pdf,
-        ])
-        time.sleep(1)
-        print(f"  [COLA] {nombre} → {mail_contacto} | PDF: {file_id}")
-    except Exception as e:
-        print(f"  [WARN] No se pudo escribir en COLA_MAILS: {e}")
+            print(f"  [APPS SCRIPT] Intento {intento + 1}/3...")
+            response = requests.post(
+                apps_script_url,
+                json=payload,
+                timeout=90,
+            )
+            print(f"  [APPS SCRIPT] Status: {response.status_code}")
+            print(f"  [APPS SCRIPT] Response: {response.text[:300]}")
+
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("status") == "ok":
+                    print(f"  [MAIL] Enviado a {mail_destino}")
+                    return data.get("file_id")
+                else:
+                    print(f"  [WARN] Error: {data.get('message')}")
+                    return None
+            else:
+                print(f"  [WARN] HTTP {response.status_code} — reintentando...")
+                time.sleep(30)
+
+        except requests.exceptions.Timeout:
+            print(f"  [WARN] Timeout intento {intento + 1} — esperando 30s...")
+            time.sleep(30)
+        except Exception as e:
+            print(f"  [WARN] Error intento {intento + 1}: {e}")
+            time.sleep(30)
+
+    print("  [ERROR] Apps Script falló después de 3 intentos")
+    return None
 
 
 def color_rgb(r, g, b):
@@ -497,24 +479,50 @@ def actualizar_dashboard(sheet, cliente, total, cumplidas, proximas, vencidas):
 
 
 def scrape_cliente(page, usuario, password):
-    presentaciones = []
-    adfs_url = (
-        "https://cnvfs.cnv.gov.ar/adfs/ls/"
-        "?wtrealm=https://aif2.cnv.gov.ar"
-        "&wa=wsignin1.0"
-        "&wreply=https://aif2.cnv.gov.ar/"
-    )
-    page.goto(adfs_url)
-    page.wait_for_load_state("networkidle", timeout=60000)
-    page.wait_for_selector("input[name='UserName']", timeout=15000)
-    page.fill("input[name='UserName']", usuario)
-    page.fill("input[name='Password']", password)
-    page.click("#submitButton")
-    page.wait_for_load_state("networkidle", timeout=60000)
+    """Scraping con reintentos ante timeout de CNV."""
+    MAX_INTENTOS = 3
 
-    page.goto("https://aif2.cnv.gov.ar/Administered/History", timeout=60000)
-    page.wait_for_load_state("networkidle", timeout=60000)
-    page.wait_for_selector("#grid-presentations tbody tr", timeout=20000)
+    for intento in range(MAX_INTENTOS):
+        try:
+            print(f"  [LOGIN] Intento {intento + 1}/{MAX_INTENTOS}...")
+            adfs_url = (
+                "https://cnvfs.cnv.gov.ar/adfs/ls/"
+                "?wtrealm=https://aif2.cnv.gov.ar"
+                "&wa=wsignin1.0"
+                "&wreply=https://aif2.cnv.gov.ar/"
+            )
+            page.goto(adfs_url, timeout=90000)
+            page.wait_for_load_state("networkidle", timeout=90000)
+            page.wait_for_selector("input[name='UserName']", timeout=30000)
+            page.fill("input[name='UserName']", usuario)
+            page.fill("input[name='Password']", password)
+            page.click("#submitButton")
+            page.wait_for_load_state("networkidle", timeout=90000)
+
+            print(f"  [LOGIN] URL post-login: {page.url}")
+
+            page.goto("https://aif2.cnv.gov.ar/Administered/History",
+                      timeout=90000)
+            page.wait_for_load_state("networkidle", timeout=90000)
+            page.wait_for_selector("#grid-presentations tbody tr",
+                                   timeout=30000)
+            break  # login exitoso, salir del loop de reintentos
+
+        except Exception as e:
+            print(f"  [LOGIN] Error intento {intento + 1}: {e}")
+            if intento < MAX_INTENTOS - 1:
+                print(f"  [LOGIN] Esperando 30s antes de reintentar...")
+                time.sleep(30)
+                # Recargar la página para limpiar estado
+                try:
+                    page.goto("about:blank")
+                except Exception:
+                    pass
+            else:
+                raise  # si agotó los intentos, propagar el error
+
+    # Extraer presentaciones
+    presentaciones = []
     filas_iniciales = len(page.query_selector_all("#grid-presentations tbody tr"))
 
     page.select_option("#date", "all")
@@ -572,7 +580,6 @@ def main():
     print("[INFO] Iniciando relevamiento...")
     try:
         sheet    = conectar_sheet()
-        sheet_id = os.environ["GOOGLE_SHEET_ID"]
         print("[INFO] Conexión establecida")
     except Exception as e:
         print(f"[ERROR FATAL] No se pudo conectar: {e}")
@@ -716,19 +723,19 @@ def main():
                                  conteo["cumplidas"], conteo["proximas"],
                                  conteo["vencidas"])
 
-            # Llamar Apps Script para generar PDF y guardarlo en Drive
+            # Llamar Apps Script para PDF + mail
             if mail_contacto:
                 nombre_pdf = (f"Relevamiento AIF — {nombre} ({tipo}) "
                               f"{AHORA_AR.strftime('%d-%m-%Y')}")
                 file_id = llamar_apps_script(
-                    nombre_pestana, nombre, tipo, nombre_pdf)
+                    nombre_pestana, nombre, tipo,
+                    nombre_pdf, mail_contacto)
                 if file_id:
-                    escribir_cola_mails(sheet, nombre, tipo, nombre_pestana,
-                                        mail_contacto, file_id, nombre_pdf)
+                    print(f"  [OK] PDF en Drive: {file_id} | Mail enviado a {mail_contacto}")
                 else:
-                    print(f"  [WARN] {nombre}: PDF no generado, no se escribe en cola")
+                    print(f"  [WARN] {nombre}: PDF no generado")
             else:
-                print(f"  [INFO] {nombre}: sin mail, no se genera PDF")
+                print(f"  [INFO] {nombre}: sin mail configurado")
 
             print(f"[DONE] {nombre}: {conteo}")
 
