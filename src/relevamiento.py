@@ -505,15 +505,15 @@ def scrape_cliente(page, usuario, password):
         "&wreply=https://aif2.cnv.gov.ar/"
     )
     page.goto(adfs_url)
-    page.wait_for_load_state("networkidle")
+    page.wait_for_load_state("networkidle", timeout=60000)
     page.wait_for_selector("input[name='UserName']", timeout=15000)
     page.fill("input[name='UserName']", usuario)
     page.fill("input[name='Password']", password)
     page.click("#submitButton")
-    page.wait_for_load_state("networkidle")
+    page.wait_for_load_state("networkidle", timeout=60000)
 
-    page.goto("https://aif2.cnv.gov.ar/Administered/History")
-    page.wait_for_load_state("networkidle")
+    page.goto("https://aif2.cnv.gov.ar/Administered/History", timeout=60000)
+    page.wait_for_load_state("networkidle", timeout=60000)
     page.wait_for_selector("#grid-presentations tbody tr", timeout=20000)
     filas_iniciales = len(page.query_selector_all("#grid-presentations tbody tr"))
 
