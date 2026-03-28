@@ -1,8 +1,7 @@
-import os, json, time, requests, io
+import os, json, time, requests
 from datetime import datetime, date, timedelta
 import gspread
 from google.oauth2.service_account import Credentials
-from google.auth.transport.requests import Request
 from playwright.sync_api import sync_playwright
 
 SCOPES = [
@@ -10,10 +9,9 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive",
 ]
 
-AHORA_AR        = datetime.utcnow() - timedelta(hours=3)
-HOY             = AHORA_AR.date()
-PROX_DIAS       = 30
-SHEET_ID        = None  # se asigna en main()
+AHORA_AR  = datetime.utcnow() - timedelta(hours=3)
+HOY       = AHORA_AR.date()
+PROX_DIAS = 30
 
 NOMBRE_A_CODIGO = {
     "HECHO RELEVANTE": "MUG_001",
@@ -147,18 +145,22 @@ def calcular_estado(fecha_pres, fecha_base_str, plazo_dias, cierre_ejercicio=Non
         dias = (vencimiento - HOY).days
         fb   = fecha_base_str.strip() if fecha_base_str else ""
         if fecha_pres:
-            if fb == "FIN_TRIMESTRE":       periodo_inicio = fin_trimestre_anterior()
-            elif fb == "FIN_MES":           periodo_inicio = fin_mes_anterior()
+            if fb == "FIN_TRIMESTRE":
+                periodo_inicio = fin_trimestre_anterior()
+            elif fb == "FIN_MES":
+                periodo_inicio = fin_mes_anterior()
             elif fb == "FIN_SEMANA":
                 monday = HOY - timedelta(days=HOY.weekday())
                 periodo_inicio = monday - timedelta(days=7)
             elif fb in ("10/01","30/04","28/08"):
                 periodo_inicio = date(HOY.year - 1, 12, 31)
-            elif fb == "31/12":             periodo_inicio = date(HOY.year - 2, 12, 31)
+            elif fb == "31/12":
+                periodo_inicio = date(HOY.year - 2, 12, 31)
             elif fb == "CIERRE_EJERCICIO":
                 periodo_inicio = (cierre_ejercicio - timedelta(days=365)
                                   if cierre_ejercicio else None)
-            else:                           periodo_inicio = None
+            else:
+                periodo_inicio = None
 
             if periodo_inicio and fecha_pres > periodo_inicio:
                 if dias < 0:           return "VENCIDO"
@@ -258,37 +260,50 @@ def obtener_cierre_ejercicio(cliente_registro):
     return None
 
 
-def obtener_gid_pestana(sheet, nombre_pestana):
-    """Obtiene el sheetId (gid) de una pestaña por nombre exacto."""
-    for ws in sheet.worksheets():
-        if ws.title == nombre_pestana:
-            return ws.id
-    return None
+def llamar_apps_script(nombre_pestana, nombre_cliente, tipo, nombre_pdf):
+    """
+    Llama al Apps Script para que genere el PDF y lo guarde en Drive.
+    Retorna el file_id del PDF o None si falla.
+    """
+    apps_script_url = os.environ.get("APPS_SCRIPT_URL", "")
+    if not apps_script_url:
+        print("  [WARN] APPS_SCRIPT_URL no configurado")
+        return None
 
+    payload = {
+        "nombre_pestana":  nombre_pestana,
+        "nombre_cliente":  nombre_cliente,
+        "tipo":            tipo,
+        "nombre_pdf":      nombre_pdf,
+    }
 
-def construir_url_export_pdf(sheet_id, gid):
-    """Construye la URL de exportación del PDF para que Make la descargue."""
-    return (
-        f"https://docs.google.com/spreadsheets/d/{sheet_id}/export"
-        f"?format=pdf"
-        f"&gid={gid}"
-        f"&portrait=false"
-        f"&fitw=true"
-        f"&gridlines=false"
-        f"&printtitle=false"
-        f"&sheetnames=false"
-        f"&fzr=false"
-        f"&size=A3"
-        f"&top_margin=0.5"
-        f"&bottom_margin=0.5"
-        f"&left_margin=0.5"
-        f"&right_margin=0.5"
-    )
+    try:
+        response = requests.post(
+            apps_script_url,
+            json=payload,
+            timeout=60,
+            # Apps Script Web App con acceso "Anyone" no requiere token
+        )
+        print(f"  [APPS SCRIPT] Status: {response.status_code}")
+        print(f"  [APPS SCRIPT] Response: {response.text[:200]}")
+
+        if response.status_code == 200:
+            data = response.json()
+            if data.get("status") == "ok":
+                return data.get("file_id")
+            else:
+                print(f"  [WARN] Apps Script error: {data.get('message')}")
+                return None
+        else:
+            print(f"  [WARN] HTTP error: {response.status_code}")
+            return None
+    except Exception as e:
+        print(f"  [WARN] Error llamando Apps Script: {e}")
+        return None
 
 
 def escribir_cola_mails(sheet, nombre, tipo, nombre_pestana,
-                        mail_contacto, url_pdf, nombre_pdf):
-    """Escribe en COLA_MAILS la URL de exportación para que Make genere el PDF."""
+                        mail_contacto, file_id, nombre_pdf):
     if not mail_contacto:
         print(f"  [COLA] {nombre}: sin mail, se omite")
         return
@@ -300,21 +315,18 @@ def escribir_cola_mails(sheet, nombre, tipo, nombre_pestana,
             ws_cola.update(range_name="A1:F1",
                            values=[["NOMBRE", "TIPO",
                                     "MAIL DESTINO", "FECHA",
-                                    "URL EXPORT PDF", "NOMBRE PDF"]])
+                                    "FILE ID", "NOMBRE PDF"]])
             time.sleep(1)
             print("  [COLA] Pestaña COLA_MAILS creada")
-
         ws_cola.append_row([
-            nombre,
-            tipo,
+            nombre, tipo,
             mail_contacto,
             AHORA_AR.strftime("%d/%m/%Y %H:%M"),
-            url_pdf,
+            file_id,
             nombre_pdf,
         ])
         time.sleep(1)
-        print(f"  [COLA] {nombre} → {mail_contacto}")
-        print(f"  [COLA] URL: {url_pdf[:80]}...")
+        print(f"  [COLA] {nombre} → {mail_contacto} | PDF: {file_id}")
     except Exception as e:
         print(f"  [WARN] No se pudo escribir en COLA_MAILS: {e}")
 
@@ -704,21 +716,17 @@ def main():
                                  conteo["cumplidas"], conteo["proximas"],
                                  conteo["vencidas"])
 
-            # Escribir en COLA_MAILS con URL de exportación para Make
+            # Llamar Apps Script para generar PDF y guardarlo en Drive
             if mail_contacto:
-                try:
-                    gid = obtener_gid_pestana(sheet, nombre_pestana)
-                    if gid is not None:
-                        url_pdf = construir_url_export_pdf(sheet_id, gid)
-                        nombre_pdf = (f"Relevamiento AIF — {nombre} ({tipo}) "
-                                      f"{AHORA_AR.strftime('%d-%m-%Y')}")
-                        escribir_cola_mails(sheet, nombre, tipo,
-                                            nombre_pestana, mail_contacto,
-                                            url_pdf, nombre_pdf)
-                    else:
-                        print(f"  [WARN] No se encontró gid para '{nombre_pestana}'")
-                except Exception as e:
-                    print(f"  [WARN] Error escribiendo cola: {e}")
+                nombre_pdf = (f"Relevamiento AIF — {nombre} ({tipo}) "
+                              f"{AHORA_AR.strftime('%d-%m-%Y')}")
+                file_id = llamar_apps_script(
+                    nombre_pestana, nombre, tipo, nombre_pdf)
+                if file_id:
+                    escribir_cola_mails(sheet, nombre, tipo, nombre_pestana,
+                                        mail_contacto, file_id, nombre_pdf)
+                else:
+                    print(f"  [WARN] {nombre}: PDF no generado, no se escribe en cola")
             else:
                 print(f"  [INFO] {nombre}: sin mail, no se genera PDF")
 
