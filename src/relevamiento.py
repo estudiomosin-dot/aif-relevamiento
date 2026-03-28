@@ -4,7 +4,6 @@ import gspread
 from google.oauth2.service_account import Credentials
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseUpload
 from playwright.sync_api import sync_playwright
 
 SCOPES = [
@@ -15,7 +14,7 @@ SCOPES = [
 AHORA_AR        = datetime.utcnow() - timedelta(hours=3)
 HOY             = AHORA_AR.date()
 PROX_DIAS       = 30
-CARPETA_RAIZ_ID = "1-v-i-5Ed4DZAeo5CIB_yK8G8ATtPIUJS"
+SHEET_ID        = None  # se asigna en main()
 
 NOMBRE_A_CODIGO = {
     "HECHO RELEVANTE": "MUG_001",
@@ -221,11 +220,6 @@ def conectar_sheet():
     gc    = gspread.authorize(creds)
     return gc.open_by_key(os.environ["GOOGLE_SHEET_ID"])
 
-def conectar_drive():
-    creds_dict = json.loads(os.environ["GOOGLE_CREDENTIALS"])
-    creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
-    return build("drive", "v3", credentials=creds)
-
 def leer_clientes(sheet):
     ws       = sheet.worksheet("CONFIGURACIÓN")
     all_rows = ws.get_all_values()
@@ -265,115 +259,37 @@ def obtener_cierre_ejercicio(cliente_registro):
     return None
 
 
-def obtener_o_crear_carpeta(drive_service, nombre_carpeta, parent_id):
-    """Busca subcarpeta en parent_id. Si no existe, la crea."""
-    query = (f"name='{nombre_carpeta}' and "
-             f"mimeType='application/vnd.google-apps.folder' and "
-             f"trashed=false and '{parent_id}' in parents")
-    results = drive_service.files().list(
-        q=query,
-        fields="files(id, name)",
-        supportsAllDrives=True,
-        includeItemsFromAllDrives=True
-    ).execute()
-    files = results.get("files", [])
-    if files:
-        return files[0]["id"]
-    metadata = {
-        "name": nombre_carpeta,
-        "mimeType": "application/vnd.google-apps.folder",
-        "parents": [parent_id],
-    }
-    folder = drive_service.files().create(
-        body=metadata,
-        fields="id",
-        supportsAllDrives=True
-    ).execute()
-    print(f"  [DRIVE] Subcarpeta creada: {nombre_carpeta}")
-    return folder.get("id")
-
-
-def exportar_pdf_y_subir_drive(drive_service, sheet_id, gid,
-                                nombre_archivo, nombre_cliente, tipo):
-    """
-    Exporta pestaña como PDF y la sube directamente a la carpeta
-    compartida en tu Google Drive usando multipart upload.
-    """
-    export_url = (
-        f"https://docs.google.com/spreadsheets/d/{sheet_id}/export"
-        f"?format=pdf&gid={gid}&portrait=false&fitw=true"
-        f"&gridlines=false&printtitle=false&sheetnames=false&fzr=false"
-        f"&size=A3&top_margin=0.5&bottom_margin=0.5"
-        f"&left_margin=0.5&right_margin=0.5"
-    )
-
-    creds_dict = json.loads(os.environ["GOOGLE_CREDENTIALS"])
-    creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
-    creds.refresh(Request())
-
-    # Descargar PDF
-    response = requests.get(export_url,
-                            headers={"Authorization": f"Bearer {creds.token}"})
-    if response.status_code != 200:
-        raise Exception(
-            f"Error exportando PDF: {response.status_code} — {response.text[:300]}")
-
-    pdf_bytes = response.content
-    print(f"  [PDF] Descargado: {len(pdf_bytes)} bytes")
-
-    # Obtener o crear carpeta del cliente
-    carpeta_cliente = obtener_o_crear_carpeta(
-        drive_service,
-        f"{nombre_cliente} ({tipo})",
-        parent_id=CARPETA_RAIZ_ID
-    )
-
-    # Subir usando requests directamente con el token — evita el storage del SA
-    upload_url = "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true"
-
-    metadata = json.dumps({
-        "name": f"{nombre_archivo}.pdf",
-        "mimeType": "application/pdf",
-        "parents": [carpeta_cliente],
-    })
-
-    files_upload = {
-        "metadata": ("metadata", metadata, "application/json"),
-        "file":     ("file", pdf_bytes, "application/pdf"),
-    }
-
-    upload_response = requests.post(
-        upload_url,
-        headers={"Authorization": f"Bearer {creds.token}"},
-        files=files_upload
-    )
-
-    if upload_response.status_code not in (200, 201):
-        raise Exception(
-            f"Error subiendo PDF: {upload_response.status_code} — {upload_response.text[:300]}")
-
-    file_id = upload_response.json().get("id")
-
-    # Permiso de lectura para Make
-    drive_service.permissions().create(
-        fileId=file_id,
-        body={"type": "anyone", "role": "reader"},
-        supportsAllDrives=True
-    ).execute()
-
-    print(f"  [PDF] Subido: {nombre_cliente} ({tipo})/{nombre_archivo}.pdf")
-    print(f"  [PDF] File ID: {file_id}")
-    return file_id
-
 def obtener_gid_pestana(sheet, nombre_pestana):
+    """Obtiene el sheetId (gid) de una pestaña por nombre exacto."""
     for ws in sheet.worksheets():
         if ws.title == nombre_pestana:
             return ws.id
     return None
 
 
+def construir_url_export_pdf(sheet_id, gid):
+    """Construye la URL de exportación del PDF para que Make la descargue."""
+    return (
+        f"https://docs.google.com/spreadsheets/d/{sheet_id}/export"
+        f"?format=pdf"
+        f"&gid={gid}"
+        f"&portrait=false"
+        f"&fitw=true"
+        f"&gridlines=false"
+        f"&printtitle=false"
+        f"&sheetnames=false"
+        f"&fzr=false"
+        f"&size=A3"
+        f"&top_margin=0.5"
+        f"&bottom_margin=0.5"
+        f"&left_margin=0.5"
+        f"&right_margin=0.5"
+    )
+
+
 def escribir_cola_mails(sheet, nombre, tipo, nombre_pestana,
-                        mail_contacto, file_id):
+                        mail_contacto, url_pdf, nombre_pdf):
+    """Escribe en COLA_MAILS la URL de exportación para que Make genere el PDF."""
     if not mail_contacto:
         print(f"  [COLA] {nombre}: sin mail, se omite")
         return
@@ -383,18 +299,23 @@ def escribir_cola_mails(sheet, nombre, tipo, nombre_pestana,
         except gspread.WorksheetNotFound:
             ws_cola = sheet.add_worksheet(title="COLA_MAILS", rows=100, cols=6)
             ws_cola.update(range_name="A1:F1",
-                           values=[["NOMBRE", "TIPO", "PESTAÑA",
-                                    "MAIL DESTINO", "FECHA", "FILE ID"]])
+                           values=[["NOMBRE", "TIPO",
+                                    "MAIL DESTINO", "FECHA",
+                                    "URL EXPORT PDF", "NOMBRE PDF"]])
             time.sleep(1)
             print("  [COLA] Pestaña COLA_MAILS creada")
+
         ws_cola.append_row([
-            nombre, tipo, nombre_pestana,
+            nombre,
+            tipo,
             mail_contacto,
             AHORA_AR.strftime("%d/%m/%Y %H:%M"),
-            file_id,
+            url_pdf,
+            nombre_pdf,
         ])
         time.sleep(1)
-        print(f"  [COLA] {nombre} → {mail_contacto} | PDF: {file_id}")
+        print(f"  [COLA] {nombre} → {mail_contacto}")
+        print(f"  [COLA] URL: {url_pdf[:80]}...")
     except Exception as e:
         print(f"  [WARN] No se pudo escribir en COLA_MAILS: {e}")
 
@@ -639,15 +560,14 @@ def scrape_cliente(page, usuario, password):
 def main():
     print("[INFO] Iniciando relevamiento...")
     try:
-        sheet         = conectar_sheet()
-        drive_service = conectar_drive()
-        print("[INFO] Conexiones establecidas")
+        sheet    = conectar_sheet()
+        sheet_id = os.environ["GOOGLE_SHEET_ID"]
+        print("[INFO] Conexión establecida")
     except Exception as e:
         print(f"[ERROR FATAL] No se pudo conectar: {e}")
         return
 
     clientes = leer_clientes(sheet)
-    sheet_id = os.environ["GOOGLE_SHEET_ID"]
 
     if not clientes:
         print("[INFO] No hay clientes con EJECUTAR EN PRÓX. CRON = S. Finalizando.")
@@ -785,28 +705,21 @@ def main():
                                  conteo["cumplidas"], conteo["proximas"],
                                  conteo["vencidas"])
 
-            # Exportar PDF, subir a Drive y escribir en cola
+            # Escribir en COLA_MAILS con URL de exportación para Make
             if mail_contacto:
                 try:
-                    print(f"  [PDF] Buscando pestaña: '{nombre_pestana}'")
-                    todas = [ws.title for ws in sheet.worksheets()]
                     gid = obtener_gid_pestana(sheet, nombre_pestana)
-                    print(f"  [PDF] GID: {gid}")
                     if gid is not None:
+                        url_pdf = construir_url_export_pdf(sheet_id, gid)
                         nombre_pdf = (f"Relevamiento AIF — {nombre} ({tipo}) "
                                       f"{AHORA_AR.strftime('%d-%m-%Y')}")
-                        file_id = exportar_pdf_y_subir_drive(
-                            drive_service, sheet_id, gid,
-                            nombre_pdf, nombre, tipo)
                         escribir_cola_mails(sheet, nombre, tipo,
                                             nombre_pestana, mail_contacto,
-                                            file_id)
+                                            url_pdf, nombre_pdf)
                     else:
-                        print(f"  [WARN] Pestaña no encontrada. Disponibles: {todas}")
+                        print(f"  [WARN] No se encontró gid para '{nombre_pestana}'")
                 except Exception as e:
-                    import traceback
-                    print(f"  [WARN] Error PDF: {e}")
-                    print(traceback.format_exc())
+                    print(f"  [WARN] Error escribiendo cola: {e}")
             else:
                 print(f"  [INFO] {nombre}: sin mail, no se genera PDF")
 
