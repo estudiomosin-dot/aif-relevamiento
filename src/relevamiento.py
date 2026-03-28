@@ -262,10 +262,6 @@ def obtener_cierre_ejercicio(cliente_registro):
 
 def llamar_apps_script(nombre_pestana, nombre_cliente, tipo,
                         nombre_pdf, mail_destino):
-    """
-    Llama al Apps Script para generar el PDF, guardarlo en Drive
-    y enviar el mail. Retorna file_id o None.
-    """
     apps_script_url = os.environ.get("APPS_SCRIPT_URL", "")
     if not apps_script_url:
         print("  [WARN] APPS_SCRIPT_URL no configurado en secrets")
@@ -282,15 +278,37 @@ def llamar_apps_script(nombre_pestana, nombre_cliente, tipo,
     for intento in range(3):
         try:
             print(f"  [APPS SCRIPT] Intento {intento + 1}/3...")
-            response = requests.post(
+
+            # Apps Script redirige el POST — hay que seguir la redirección
+            # manualmente para que no se convierta en GET
+            session = requests.Session()
+            response = session.post(
                 apps_script_url,
                 json=payload,
                 timeout=90,
+                allow_redirects=False,
             )
+
+            # Seguir redirección manualmente si existe
+            if response.status_code in (301, 302, 303, 307, 308):
+                redirect_url = response.headers.get("Location")
+                print(f"  [APPS SCRIPT] Redirigiendo a: {redirect_url[:80]}...")
+                response = session.post(
+                    redirect_url,
+                    json=payload,
+                    timeout=90,
+                )
+
             print(f"  [APPS SCRIPT] Status: {response.status_code}")
             print(f"  [APPS SCRIPT] Response: {response.text[:300]}")
 
             if response.status_code == 200:
+                # Apps Script a veces devuelve HTML en vez de JSON
+                # si hay un error de autorización
+                if response.text.strip().startswith("<"):
+                    print("  [WARN] Apps Script devolvió HTML — problema de autorización")
+                    return None
+
                 data = response.json()
                 if data.get("status") == "ok":
                     print(f"  [MAIL] Enviado a {mail_destino}")
