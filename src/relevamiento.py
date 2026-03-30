@@ -443,7 +443,7 @@ def scrape_cliente(page, usuario, password):
             )
             page.goto(adfs_url, timeout=90000)
             page.wait_for_load_state("networkidle", timeout=90000)
-            page.wait_for_selector("input[name='UserName']", timeout=30000)
+            page.wait_for_selector("input[name='UserName']", timeout=60000)
             page.fill("input[name='UserName']", usuario)
             page.fill("input[name='Password']", password)
             page.click("#submitButton")
@@ -674,6 +674,8 @@ def main():
                                  conteo["vencidas"])
             print(f"  [INFO] {nombre}: PDF y mail manejados por Apps Script trigger")
             print(f"[DONE] {nombre}: {conteo}")
+            print(f"[INFO] Esperando 60s antes del próximo cliente...")
+            time.sleep(60)
           
         browser.close()
 
