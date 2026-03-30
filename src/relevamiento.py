@@ -260,75 +260,7 @@ def obtener_cierre_ejercicio(cliente_registro):
     return None
 
 
-def llamar_apps_script(nombre_pestana, nombre_cliente, tipo,
-                        nombre_pdf, mail_destino):
-    apps_script_url = os.environ.get("APPS_SCRIPT_URL", "")
-    if not apps_script_url:
-        print("  [WARN] APPS_SCRIPT_URL no configurado en secrets")
-        return None
 
-    payload = {
-        "nombre_pestana": nombre_pestana,
-        "nombre_cliente": nombre_cliente,
-        "tipo":           tipo,
-        "nombre_pdf":     nombre_pdf,
-        "mail_destino":   mail_destino,
-    }
-
-    for intento in range(3):
-        try:
-            print(f"  [APPS SCRIPT] Intento {intento + 1}/3...")
-
-            # Apps Script redirige el POST — hay que seguir la redirección
-            # manualmente para que no se convierta en GET
-            session = requests.Session()
-            response = session.post(
-                apps_script_url,
-                json=payload,
-                timeout=90,
-                allow_redirects=False,
-            )
-
-            # Seguir redirección manualmente si existe
-            if response.status_code in (301, 302, 303, 307, 308):
-                redirect_url = response.headers.get("Location")
-                print(f"  [APPS SCRIPT] Redirigiendo a: {redirect_url[:80]}...")
-                response = session.post(
-                    redirect_url,
-                    json=payload,
-                    timeout=90,
-                )
-
-            print(f"  [APPS SCRIPT] Status: {response.status_code}")
-            print(f"  [APPS SCRIPT] Response: {response.text[:300]}")
-
-            if response.status_code == 200:
-                # Apps Script a veces devuelve HTML en vez de JSON
-                # si hay un error de autorización
-                if response.text.strip().startswith("<"):
-                    print("  [WARN] Apps Script devolvió HTML — problema de autorización")
-                    return None
-
-                data = response.json()
-                if data.get("status") == "ok":
-                    print(f"  [MAIL] Enviado a {mail_destino}")
-                    return data.get("file_id")
-                else:
-                    print(f"  [WARN] Error: {data.get('message')}")
-                    return None
-            else:
-                print(f"  [WARN] HTTP {response.status_code} — reintentando...")
-                time.sleep(30)
-
-        except requests.exceptions.Timeout:
-            print(f"  [WARN] Timeout intento {intento + 1} — esperando 30s...")
-            time.sleep(30)
-        except Exception as e:
-            print(f"  [WARN] Error intento {intento + 1}: {e}")
-            time.sleep(30)
-
-    print("  [ERROR] Apps Script falló después de 3 intentos")
-    return None
 
 
 def color_rgb(r, g, b):
@@ -740,23 +672,9 @@ def main():
             actualizar_dashboard(sheet, nombre, conteo["total"],
                                  conteo["cumplidas"], conteo["proximas"],
                                  conteo["vencidas"])
-
-            # Llamar Apps Script para PDF + mail
-            if mail_contacto:
-                nombre_pdf = (f"Relevamiento AIF — {nombre} ({tipo}) "
-                              f"{AHORA_AR.strftime('%d-%m-%Y')}")
-                file_id = llamar_apps_script(
-                    nombre_pestana, nombre, tipo,
-                    nombre_pdf, mail_contacto)
-                if file_id:
-                    print(f"  [OK] PDF en Drive: {file_id} | Mail enviado a {mail_contacto}")
-                else:
-                    print(f"  [WARN] {nombre}: PDF no generado")
-            else:
-                print(f"  [INFO] {nombre}: sin mail configurado")
-
+            print(f"  [INFO] {nombre}: PDF y mail manejados por Apps Script trigger")
             print(f"[DONE] {nombre}: {conteo}")
-
+          
         browser.close()
 
     print("[INFO] Relevamiento finalizado.")
