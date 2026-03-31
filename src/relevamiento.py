@@ -260,9 +260,6 @@ def obtener_cierre_ejercicio(cliente_registro):
     return None
 
 
-
-
-
 def color_rgb(r, g, b):
     return {"red": r/255, "green": g/255, "blue": b/255}
 
@@ -456,20 +453,19 @@ def scrape_cliente(page, usuario, password):
             page.wait_for_load_state("networkidle", timeout=90000)
             page.wait_for_selector("#grid-presentations tbody tr",
                                    timeout=30000)
-            break  # login exitoso, salir del loop de reintentos
+            break
 
         except Exception as e:
             print(f"  [LOGIN] Error intento {intento + 1}: {e}")
             if intento < MAX_INTENTOS - 1:
                 print(f"  [LOGIN] Esperando 30s antes de reintentar...")
                 time.sleep(30)
-                # Recargar la página para limpiar estado
                 try:
                     page.goto("about:blank")
                 except Exception:
                     pass
             else:
-                raise  # si agotó los intentos, propagar el error
+                raise
 
     # Extraer presentaciones
     presentaciones = []
@@ -529,7 +525,7 @@ def scrape_cliente(page, usuario, password):
 def main():
     print("[INFO] Iniciando relevamiento...")
     try:
-        sheet    = conectar_sheet()
+        sheet = conectar_sheet()
         print("[INFO] Conexión establecida")
     except Exception as e:
         print(f"[ERROR FATAL] No se pudo conectar: {e}")
@@ -555,12 +551,12 @@ def main():
         browser = pw.chromium.launch(headless=True)
 
         for cliente in clientes:
-            nombre        = cliente.get("NOMBRE CLIENTE", "").strip()
-            tipo          = cliente.get("TIPO (AN/ALyC)", "").strip()
-            usuario       = cliente.get("USUARIO AIF", "").strip()
-            password      = cliente.get("CLAVE AIF", "").strip()
-            frecuencia    = cliente.get("FRECUENCIA RELEV.", "DIARIA")
-            mail_contacto = cliente.get("MAIL CONTACTO", "").strip()
+            nombre           = cliente.get("NOMBRE CLIENTE", "").strip()
+            tipo             = cliente.get("TIPO (AN/ALyC)", "").strip()
+            usuario          = cliente.get("USUARIO AIF", "").strip()
+            password         = cliente.get("CLAVE AIF", "").strip()
+            frecuencia       = cliente.get("FRECUENCIA RELEV.", "DIARIA")
+            mail_contacto    = cliente.get("MAIL CONTACTO", "").strip()
             cierre_ejercicio = obtener_cierre_ejercicio(cliente)
 
             if not password:
@@ -571,8 +567,10 @@ def main():
                 print(f"[SKIP] {nombre}: frecuencia '{frecuencia}' no corresponde hoy")
                 continue
 
-            if tipo == "ALyC":       plantilla = datos_alyc
-            elif tipo == "AN":       plantilla = datos_an
+            if tipo == "ALyC":
+                plantilla = datos_alyc
+            elif tipo == "AN":
+                plantilla = datos_an
             elif tipo == "AAGI":
                 if datos_aagi is None:
                     print(f"[SKIP] {nombre}: no existe pestaña 'AAGI - OBLIGACIONES'")
@@ -604,6 +602,14 @@ def main():
             try:
                 ws_cliente.update_cell(4, 2,
                     f"Relevamiento: {AHORA_AR.strftime('%d/%m/%Y %H:%M')} (hora Argentina)")
+                time.sleep(1)
+            except Exception:
+                pass
+
+            # ── Limpiar centinela al inicio del procesamiento ──────────────
+            # Evita que Apps Script exporte un PDF viejo si quedó "LISTO"
+            try:
+                ws_cliente.update_cell(4, 3, "PROCESANDO")
                 time.sleep(1)
             except Exception:
                 pass
@@ -672,11 +678,25 @@ def main():
             actualizar_dashboard(sheet, nombre, conteo["total"],
                                  conteo["cumplidas"], conteo["proximas"],
                                  conteo["vencidas"])
-            print(f"  [INFO] {nombre}: PDF y mail manejados por Apps Script trigger")
+
+            # ── Señal de "listo para PDF" — Apps Script la lee antes de exportar ──
+            # El Apps Script tiene un trigger time-based cada 5 min que busca
+            # esta celda en "LISTO" para generar el PDF. Al escribirla acá,
+            # todos los estados ya están escritos en la pestaña.
+            if mail_contacto:
+                try:
+                    ws_cliente.update_cell(4, 3, "LISTO")
+                    time.sleep(1)
+                    print(f"  [PDF] Centinela 'LISTO' escrito en D4 — Apps Script generará el PDF")
+                except Exception as e:
+                    print(f"  [WARN] No se pudo escribir centinela PDF: {e}")
+            else:
+                print(f"  [INFO] {nombre}: sin mail, no se genera PDF")
+
             print(f"[DONE] {nombre}: {conteo}")
             print(f"[INFO] Esperando 60s antes del próximo cliente...")
             time.sleep(60)
-          
+
         browser.close()
 
     print("[INFO] Relevamiento finalizado.")
