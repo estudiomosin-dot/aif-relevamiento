@@ -260,114 +260,16 @@ def obtener_cierre_ejercicio(cliente_registro):
     return None
 
 
-def color_rgb(r, g, b):
-    return {"red": r/255, "green": g/255, "blue": b/255}
-
-def aplicar_formato_pestana(sheet, ws):
-    sheet_id = ws.id
-    sid      = sheet.id
-    reqs = [
-        {"repeatCell": {
-            "range": {"sheetId": sheet_id, "startRowIndex": 1, "endRowIndex": 2,
-                      "startColumnIndex": 0, "endColumnIndex": 14},
-            "cell": {"userEnteredFormat": {
-                "backgroundColor": color_rgb(31,56,100),
-                "textFormat": {"foregroundColor": color_rgb(255,255,255),
-                               "bold": True, "fontSize": 13, "fontFamily": "Arial"},
-                "verticalAlignment": "MIDDLE",
-            }},
-            "fields": "userEnteredFormat(backgroundColor,textFormat,verticalAlignment)"
-        }},
-        {"repeatCell": {
-            "range": {"sheetId": sheet_id, "startRowIndex": 3, "endRowIndex": 4,
-                      "startColumnIndex": 0, "endColumnIndex": 14},
-            "cell": {"userEnteredFormat": {
-                "backgroundColor": color_rgb(242,242,242),
-                "textFormat": {"italic": True, "fontSize": 9, "fontFamily": "Arial",
-                               "foregroundColor": color_rgb(85,85,85)},
-            }},
-            "fields": "userEnteredFormat(backgroundColor,textFormat)"
-        }},
-        {"repeatCell": {
-            "range": {"sheetId": sheet_id, "startRowIndex": 7, "endRowIndex": 8,
-                      "startColumnIndex": 0, "endColumnIndex": 14},
-            "cell": {"userEnteredFormat": {
-                "backgroundColor": color_rgb(46,117,182),
-                "textFormat": {"foregroundColor": color_rgb(255,255,255),
-                               "bold": True, "fontSize": 9, "fontFamily": "Arial"},
-                "horizontalAlignment": "CENTER",
-                "verticalAlignment": "MIDDLE",
-                "wrapStrategy": "WRAP",
-            }},
-            "fields": "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment,wrapStrategy)"
-        }},
-        {"addConditionalFormatRule": {"rule": {
-            "ranges": [{"sheetId": sheet_id, "startRowIndex": 8,
-                        "startColumnIndex": 11, "endColumnIndex": 12}],
-            "booleanRule": {
-                "condition": {"type": "TEXT_EQ",
-                              "values": [{"userEnteredValue": "CUMPLIDO"}]},
-                "format": {"backgroundColor": color_rgb(198,239,206),
-                           "textFormat": {"foregroundColor": color_rgb(39,98,33),
-                                          "bold": True}}
-            }
-        }, "index": 0}},
-        {"addConditionalFormatRule": {"rule": {
-            "ranges": [{"sheetId": sheet_id, "startRowIndex": 8,
-                        "startColumnIndex": 11, "endColumnIndex": 12}],
-            "booleanRule": {
-                "condition": {"type": "TEXT_EQ",
-                              "values": [{"userEnteredValue": "PRÓXIMO"}]},
-                "format": {"backgroundColor": color_rgb(255,235,156),
-                           "textFormat": {"foregroundColor": color_rgb(156,87,0),
-                                          "bold": True}}
-            }
-        }, "index": 1}},
-        {"addConditionalFormatRule": {"rule": {
-            "ranges": [{"sheetId": sheet_id, "startRowIndex": 8,
-                        "startColumnIndex": 11, "endColumnIndex": 12}],
-            "booleanRule": {
-                "condition": {"type": "TEXT_EQ",
-                              "values": [{"userEnteredValue": "VENCIDO"}]},
-                "format": {"backgroundColor": color_rgb(255,199,206),
-                           "textFormat": {"foregroundColor": color_rgb(156,0,6),
-                                          "bold": True}}
-            }
-        }, "index": 2}},
-        {"addConditionalFormatRule": {"rule": {
-            "ranges": [{"sheetId": sheet_id, "startRowIndex": 8,
-                        "startColumnIndex": 11, "endColumnIndex": 12}],
-            "booleanRule": {
-                "condition": {"type": "TEXT_EQ",
-                              "values": [{"userEnteredValue": "AUSENTE"}]},
-                "format": {"backgroundColor": color_rgb(255,199,206),
-                           "textFormat": {"foregroundColor": color_rgb(156,0,6),
-                                          "bold": True}}
-            }
-        }, "index": 3}},
-        {"updateDimensionProperties": {
-            "range": {"sheetId": sheet_id, "dimension": "ROWS",
-                      "startIndex": 1, "endIndex": 2},
-            "properties": {"pixelSize": 32}, "fields": "pixelSize"
-        }},
-        {"updateDimensionProperties": {
-            "range": {"sheetId": sheet_id, "dimension": "ROWS",
-                      "startIndex": 7, "endIndex": 8},
-            "properties": {"pixelSize": 36}, "fields": "pixelSize"
-        }},
-    ]
-    sheet.client.request(
-        "post",
-        f"https://sheets.googleapis.com/v4/spreadsheets/{sid}:batchUpdate",
-        json={"requests": reqs}
-    )
-    time.sleep(1)
-
-
-def obtener_o_crear_pestana(sheet, nombre_pestana, plantilla_datos,
-                             nombre_cliente, tipo):
+def obtener_o_crear_pestana(sheet, nombre_pestana, tipo, nombre_cliente):
+    """
+    Si la pestaña ya existe: la reutiliza limpiando columnas I:L.
+    Si no existe: duplica el template del tipo correspondiente,
+    preservando todo el formato, anchos de columna, colores, etc.
+    """
     try:
         ws = sheet.worksheet(nombre_pestana)
+        print(f"  [PESTAÑA] Reutilizando '{nombre_pestana}'")
+        # Limpiar estados anteriores para reprocesar
         all_vals = ws.get_all_values()
         batch = []
         for i, fila in enumerate(all_vals[8:], start=9):
@@ -378,19 +280,40 @@ def obtener_o_crear_pestana(sheet, nombre_pestana, plantilla_datos,
             ws.batch_update(batch)
             time.sleep(2)
         return ws
+
     except gspread.WorksheetNotFound:
-        ws = sheet.add_worksheet(title=nombre_pestana, rows=250, cols=14)
-        time.sleep(1)
-        if plantilla_datos:
-            ws.update(range_name="A1", values=plantilla_datos)
-            time.sleep(2)
-        ws.update_cell(2, 1,
+        # Duplicar la pestaña template — preserva TODO el formato
+        nombre_template = f"{tipo} - OBLIGACIONES"
+        print(f"  [PESTAÑA] Creando '{nombre_pestana}' desde template '{nombre_template}'")
+        try:
+            ws_template = sheet.worksheet(nombre_template)
+        except gspread.WorksheetNotFound:
+            raise Exception(
+                f"No existe la pestaña template '{nombre_template}'. "
+                f"Verificá que exista en el Sheet."
+            )
+
+        sid               = sheet.id
+        template_sheet_id = ws_template.id
+
+        sheet.client.request(
+            "post",
+            f"https://sheets.googleapis.com/v4/spreadsheets/{sid}:batchUpdate",
+            json={"requests": [{"duplicateSheet": {
+                "sourceSheetId":    template_sheet_id,
+                "insertSheetIndex": sheet.sheet_count,
+                "newSheetName":     nombre_pestana,
+            }}]}
+        )
+        time.sleep(2)
+
+        ws = sheet.worksheet(nombre_pestana)
+
+        # Escribir nombre del cliente en la celda del título (fila 2, col B)
+        ws.update_cell(2, 2,
             f"{nombre_cliente}  ({tipo})  |  Régimen Informativo AIF — CNV")
         time.sleep(1)
-        try:
-            aplicar_formato_pestana(sheet, ws)
-        except Exception as e:
-            print(f"  [WARN] Formato no aplicado: {e}")
+
         return ws
 
 
@@ -537,15 +460,17 @@ def main():
         print("[INFO] No hay clientes con EJECUTAR EN PRÓX. CRON = S. Finalizando.")
         return
 
-    ws_alyc    = sheet.worksheet("ALyC - OBLIGACIONES")
-    ws_an      = sheet.worksheet("AN - OBLIGACIONES")
-    datos_alyc = ws_alyc.get_all_values()
-    datos_an   = ws_an.get_all_values()
-    try:
-        datos_aagi = sheet.worksheet("AAGI - OBLIGACIONES").get_all_values()
-    except gspread.WorksheetNotFound:
-        datos_aagi = None
-    time.sleep(2)
+    # Verificar que existan los templates necesarios antes de empezar
+    tipos_necesarios = set(c.get("TIPO (AN/ALyC)", "").strip() for c in clientes)
+    for tipo in tipos_necesarios:
+        nombre_template = f"{tipo} - OBLIGACIONES"
+        try:
+            sheet.worksheet(nombre_template)
+            print(f"[INFO] Template '{nombre_template}' encontrado OK")
+        except gspread.WorksheetNotFound:
+            print(f"[WARN] Template '{nombre_template}' NO encontrado — "
+                  f"los clientes de tipo {tipo} van a fallar")
+    time.sleep(1)
 
     with sync_playwright() as pw:
         browser = pw.chromium.launch(headless=True)
@@ -567,16 +492,7 @@ def main():
                 print(f"[SKIP] {nombre}: frecuencia '{frecuencia}' no corresponde hoy")
                 continue
 
-            if tipo == "ALyC":
-                plantilla = datos_alyc
-            elif tipo == "AN":
-                plantilla = datos_an
-            elif tipo == "AAGI":
-                if datos_aagi is None:
-                    print(f"[SKIP] {nombre}: no existe pestaña 'AAGI - OBLIGACIONES'")
-                    continue
-                plantilla = datos_aagi
-            else:
+            if tipo not in ("ALyC", "AN", "AAGI"):
                 print(f"[SKIP] {nombre}: tipo desconocido '{tipo}'")
                 continue
 
@@ -595,21 +511,26 @@ def main():
 
             fecha_corta    = AHORA_AR.strftime("%d/%m")
             nombre_pestana = f"{nombre} · {tipo} · {fecha_corta}"
-            ws_cliente     = obtener_o_crear_pestana(
-                sheet, nombre_pestana, plantilla, nombre, tipo)
-            time.sleep(2)
 
             try:
-                ws_cliente.update_cell(4, 2,
-                    f"Relevamiento: {AHORA_AR.strftime('%d/%m/%Y %H:%M')} (hora Argentina)")
+                ws_cliente = obtener_o_crear_pestana(
+                    sheet, nombre_pestana, tipo, nombre)
+            except Exception as e:
+                print(f"[ERROR] {nombre}: no se pudo crear pestaña — {e}")
+                continue
+            time.sleep(2)
+
+            # ── Marcar PROCESANDO en A1 ────────────────────────────────
+            # El Apps Script ignora esta pestaña hasta que llegue "LISTO"
+            try:
+                ws_cliente.update_cell(1, 1, "PROCESANDO")
                 time.sleep(1)
             except Exception:
                 pass
 
-            # ── Limpiar centinela al inicio del procesamiento ──────────────
-            # Evita que Apps Script exporte un PDF viejo si quedó "LISTO"
             try:
-                ws_cliente.update_cell(4, 3, "PROCESANDO")
+                ws_cliente.update_cell(4, 2,
+                    f"Relevamiento: {AHORA_AR.strftime('%d/%m/%Y %H:%M')} (hora Argentina)")
                 time.sleep(1)
             except Exception:
                 pass
@@ -679,18 +600,21 @@ def main():
                                  conteo["cumplidas"], conteo["proximas"],
                                  conteo["vencidas"])
 
-            # ── Señal de "listo para PDF" — Apps Script la lee antes de exportar ──
-            # El Apps Script tiene un trigger time-based cada 5 min que busca
-            # esta celda en "LISTO" para generar el PDF. Al escribirla acá,
-            # todos los estados ya están escritos en la pestaña.
+            # ── Señal final: A1 = "LISTO" ──────────────────────────────
+            # En este punto todos los estados están escritos en el Sheet.
+            # El Apps Script (trigger cada 5 min) detecta "LISTO" y exporta.
             if mail_contacto:
                 try:
-                    ws_cliente.update_cell(4, 3, "LISTO")
+                    ws_cliente.update_cell(1, 1, "LISTO")
                     time.sleep(1)
-                    print(f"  [PDF] Centinela 'LISTO' escrito en D4 — Apps Script generará el PDF")
+                    print(f"  [PDF] Centinela 'LISTO' escrito en A1 — Apps Script generará el PDF")
                 except Exception as e:
                     print(f"  [WARN] No se pudo escribir centinela PDF: {e}")
             else:
+                try:
+                    ws_cliente.update_cell(1, 1, "SIN_MAIL")
+                except Exception:
+                    pass
                 print(f"  [INFO] {nombre}: sin mail, no se genera PDF")
 
             print(f"[DONE] {nombre}: {conteo}")
