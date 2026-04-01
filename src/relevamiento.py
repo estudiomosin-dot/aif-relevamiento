@@ -301,7 +301,7 @@ def obtener_o_crear_pestana(sheet, nombre_pestana, tipo, nombre_cliente):
             f"https://sheets.googleapis.com/v4/spreadsheets/{sid}:batchUpdate",
             json={"requests": [{"duplicateSheet": {
                 "sourceSheetId":    template_sheet_id,
-                "insertSheetIndex": sheet.sheet_count,
+                "insertSheetIndex": len(sheet.worksheets()),
                 "newSheetName":     nombre_pestana,
             }}]}
         )
