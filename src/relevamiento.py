@@ -1,5 +1,6 @@
-import os, json, time, requests
+import os, json, time, re, requests
 from datetime import datetime, date, timedelta
+import holidays
 import gspread
 from google.oauth2.service_account import Credentials
 from playwright.sync_api import sync_playwright
@@ -12,6 +13,10 @@ SCOPES = [
 AHORA_AR  = datetime.utcnow() - timedelta(hours=3)
 HOY       = AHORA_AR.date()
 PROX_DIAS = 30
+
+# Feriados nacionales de Argentina (incluye traslados y feriados con fines turísticos).
+# Cubrimos ±1 año para que sumar_habiles funcione cerca de cambios de año.
+AR_HOLIDAYS = holidays.Argentina(years=range(HOY.year - 1, HOY.year + 2))
 
 NOMBRE_A_CODIGO = {
     "HECHO RELEVANTE": "MUG_001",
@@ -97,6 +102,37 @@ NOMBRE_A_CODIGO = {
 CODIGOS_VALIDOS = set(NOMBRE_A_CODIGO.values())
 
 
+# ─────────────────────────────────────────────────────────────────
+# Helpers de fechas y plazos
+# ─────────────────────────────────────────────────────────────────
+
+def sumar_habiles(base, n):
+    """Suma n días hábiles a base_date (excluye sábados, domingos y feriados AR)."""
+    d = base
+    while n > 0:
+        d += timedelta(days=1)
+        if d.weekday() < 5 and d not in AR_HOLIDAYS:
+            n -= 1
+    return d
+
+
+def parse_plazo_desc(desc):
+    """
+    Parsea descripciones tipo '10 días hábiles del cierre' o '70 días corridos del cierre'.
+    Devuelve (n_dias, tipo) donde tipo es 'habiles' o 'corridos'.
+    Si la descripción no especifica nro de días + tipo, devuelve (None, None)
+    y el caller debe caer al valor numérico de la columna G.
+    """
+    if not desc:
+        return None, None
+    m = re.search(r'(\d+)\s*d[ií]as?\s*(h[áa]biles?|corridos?)', desc.lower())
+    if not m:
+        return None, None
+    n = int(m.group(1))
+    tipo = "habiles" if m.group(2).startswith(("hábil", "habil")) else "corridos"
+    return n, tipo
+
+
 def fin_trimestre_anterior():
     m = HOY.month
     if m <= 3:  return date(HOY.year - 1, 12, 31)
@@ -111,77 +147,105 @@ def miercoles_esta_semana():
     monday = HOY - timedelta(days=HOY.weekday())
     return monday + timedelta(days=2)
 
-def calcular_vencimiento(fecha_base_str, plazo_dias, cierre_ejercicio=None):
+
+def calcular_vencimiento(fecha_base_str, plazo_dias, plazo_desc=None, cierre_ejercicio=None):
+    """
+    Calcula la fecha de vencimiento.
+    - Si plazo_desc contiene 'hábiles', usa sumar_habiles (excluye fines de semana y feriados).
+    - Si plazo_desc contiene 'corridos' o no especifica tipo, suma días calendario.
+    - Si plazo_desc trae un número explícito (ej. '10 días hábiles'), prevalece sobre la columna G.
+      Si no, se usa el valor numérico de la columna G del Sheet.
+    """
     if not fecha_base_str or fecha_base_str in ("—", ""):
         return None
     fb = fecha_base_str.strip()
-    if fb == "FIN_TRIMESTRE":
-        base = fin_trimestre_anterior()
-        return base + timedelta(days=plazo_dias) if plazo_dias else None
-    if fb == "FIN_MES":
-        base = fin_mes_anterior()
-        return base + timedelta(days=plazo_dias) if plazo_dias else None
-    if fb == "FIN_SEMANA":
-        return miercoles_esta_semana()
-    if fb == "10/01":  return date(HOY.year, 1, 10)
-    if fb == "30/04":  return date(HOY.year, 4, 30)
-    if fb == "28/08":  return date(HOY.year, 8, 28)
-    if fb == "31/12":
-        base = date(HOY.year - 1, 12, 31)
-        return base + timedelta(days=plazo_dias) if plazo_dias else None
+
+    n_parsed, tipo = parse_plazo_desc(plazo_desc)
+    n = n_parsed if n_parsed is not None else plazo_dias
+    es_habiles = (tipo == "habiles")
+
+    def sumar(base):
+        if n is None:
+            return None
+        return sumar_habiles(base, n) if es_habiles else base + timedelta(days=n)
+
+    if fb == "FIN_TRIMESTRE":     return sumar(fin_trimestre_anterior())
+    if fb == "FIN_MES":           return sumar(fin_mes_anterior())
+    if fb == "FIN_SEMANA":        return miercoles_esta_semana()
+    if fb == "10/01":             return date(HOY.year, 1, 10)
+    if fb == "30/04":             return date(HOY.year, 4, 30)
+    if fb == "28/08":             return date(HOY.year, 8, 28)
+    if fb == "31/12":             return sumar(date(HOY.year - 1, 12, 31))
     if fb == "CIERRE_EJERCICIO":
-        if cierre_ejercicio and plazo_dias:
-            return cierre_ejercicio + timedelta(days=plazo_dias)
-        return None
+        return sumar(cierre_ejercicio) if cierre_ejercicio else None
     return None
 
-def calcular_estado(fecha_pres, fecha_base_str, plazo_dias, cierre_ejercicio=None):
-    vencimiento = calcular_vencimiento(fecha_base_str, plazo_dias, cierre_ejercicio)
 
+def calcular_estado(fecha_pres, fecha_base_str, plazo_dias, plazo_desc=None, cierre_ejercicio=None):
+    """
+    Devuelve uno de: CUMPLIDO, PRÓXIMO, VENCIDO, AUSENTE.
+
+    Lógica:
+    - CUMPLIDO: hay presentación para el período vigente Y fue en o antes del vencimiento.
+    - VENCIDO: (a) no hay presentación del período vigente y el vencimiento ya pasó,
+               o (b) hay presentación pero fue posterior al vencimiento (fuera de término).
+    - PRÓXIMO: sin presentación del período vigente y vencimiento dentro de los PROX_DIAS.
+    - AUSENTE: sin presentación, vencimiento lejano (o sin plazo definido).
+    """
+    vencimiento = calcular_vencimiento(fecha_base_str, plazo_dias, plazo_desc, cierre_ejercicio)
+
+    # Caso eventual sin plazo (ante cambio, ante apertura, etc.)
     if vencimiento is None and not plazo_dias:
         return "CUMPLIDO" if fecha_pres else "AUSENTE"
 
     if vencimiento:
-        dias = (vencimiento - HOY).days
-        fb   = fecha_base_str.strip() if fecha_base_str else ""
-        if fecha_pres:
-            if fb == "FIN_TRIMESTRE":
-                periodo_inicio = fin_trimestre_anterior()
-            elif fb == "FIN_MES":
-                periodo_inicio = fin_mes_anterior()
-            elif fb == "FIN_SEMANA":
-                monday = HOY - timedelta(days=HOY.weekday())
-                periodo_inicio = monday - timedelta(days=7)
-            elif fb in ("10/01","30/04","28/08"):
-                periodo_inicio = date(HOY.year - 1, 12, 31)
-            elif fb == "31/12":
-                periodo_inicio = date(HOY.year - 2, 12, 31)
-            elif fb == "CIERRE_EJERCICIO":
-                periodo_inicio = (cierre_ejercicio - timedelta(days=365)
-                                  if cierre_ejercicio else None)
-            else:
-                periodo_inicio = None
+        fb = fecha_base_str.strip() if fecha_base_str else ""
 
-            if periodo_inicio and fecha_pres > periodo_inicio:
-                if dias < 0:           return "VENCIDO"
-                if dias <= PROX_DIAS:  return "PRÓXIMO"
-                return "CUMPLIDO"
-            elif periodo_inicio is None:
-                if dias < 0:           return "VENCIDO"
-                if dias <= PROX_DIAS:  return "PRÓXIMO"
-                return "CUMPLIDO"
-            else:
-                if dias < 0:           return "VENCIDO"
-                if dias <= PROX_DIAS:  return "PRÓXIMO"
-                return "AUSENTE"
+        # Inicio del período vigente: la presentación tiene que ser POSTERIOR a esta fecha
+        # para contarse como del período actual (no de uno anterior).
+        if fb == "FIN_TRIMESTRE":
+            periodo_inicio = fin_trimestre_anterior()
+        elif fb == "FIN_MES":
+            periodo_inicio = fin_mes_anterior()
+        elif fb == "FIN_SEMANA":
+            monday = HOY - timedelta(days=HOY.weekday())
+            periodo_inicio = monday - timedelta(days=7)
+        elif fb in ("10/01", "30/04", "28/08"):
+            periodo_inicio = date(HOY.year - 1, 12, 31)
+        elif fb == "31/12":
+            periodo_inicio = date(HOY.year - 2, 12, 31)
+        elif fb == "CIERRE_EJERCICIO":
+            # Fix: el período vigente arranca EN el cierre, no 365 días antes.
+            periodo_inicio = cierre_ejercicio
         else:
-            if dias < 0:           return "VENCIDO"
-            if dias <= PROX_DIAS:  return "PRÓXIMO"
-            return "AUSENTE"
+            periodo_inicio = None
 
+        # ¿La presentación corresponde al período vigente?
+        if fecha_pres and (periodo_inicio is None or fecha_pres > periodo_inicio):
+            # Fix principal: comparar fecha_pres contra el vencimiento, no contra HOY.
+            # Si presentó antes o el mismo día del vencimiento → CUMPLIDO,
+            # aunque HOY ya esté más allá del vencimiento.
+            if fecha_pres <= vencimiento:
+                return "CUMPLIDO"
+            else:
+                return "VENCIDO"   # presentó fuera de término
+
+        # Sin presentación para el período vigente
+        dias = (vencimiento - HOY).days
+        if dias < 0:           return "VENCIDO"
+        if dias <= PROX_DIAS:  return "PRÓXIMO"
+        return "AUSENTE"
+
+    # Caso: sin vencimiento absoluto pero con plazo desde fecha_pres (eventual con plazo)
     if fecha_pres is None: return "AUSENTE"
     if plazo_dias:
-        dias = (fecha_pres + timedelta(days=plazo_dias) - HOY).days
+        n_parsed, tipo = parse_plazo_desc(plazo_desc)
+        n = n_parsed if n_parsed is not None else plazo_dias
+        if tipo == "habiles":
+            limite = sumar_habiles(fecha_pres, n)
+        else:
+            limite = fecha_pres + timedelta(days=n)
+        dias = (limite - HOY).days
         if dias < 0:           return "VENCIDO"
         if dias <= PROX_DIAS:  return "PRÓXIMO"
     return "CUMPLIDO"
@@ -547,6 +611,7 @@ def main():
                 if not codigo: continue
 
                 descripcion = fila[2].strip()  if len(fila) > 2  else ""
+                plazo_desc  = fila[5].strip()  if len(fila) > 5  else ""   # nuevo: columna F
                 plazo_str   = fila[6].strip()  if len(fila) > 6  else ""
                 plazo_dias  = int(plazo_str)   if plazo_str.isdigit() else None
                 fecha_base  = fila[7].strip()  if len(fila) > 7  else ""
@@ -561,7 +626,7 @@ def main():
                 id_pres    = match["id"]    if match else ""
 
                 estado_nuevo = calcular_estado(
-                    fecha_pres, fecha_base, plazo_dias, cierre_ejercicio)
+                    fecha_pres, fecha_base, plazo_dias, plazo_desc, cierre_ejercicio)
 
                 conteo["total"] += 1
                 if estado_nuevo == "CUMPLIDO":   conteo["cumplidas"] += 1
